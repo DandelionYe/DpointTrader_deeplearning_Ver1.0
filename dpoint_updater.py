@@ -401,7 +401,7 @@ def _compute_dpoint_retrain(
         dpoint: pd.Series，index 为 pd.Timestamp 日期，包含全部可计算日期
     """
     # ── 延迟导入（保证脚本在项目根目录运行时能找到兄弟模块）──
-    from training import train_final_model_and_dpoint  # type: ignore
+    from trainer import train_final_model_and_dpoint  # type: ignore
 
     print("  [训练] 正在使用原配置在新数据上重新训练模型...")
 

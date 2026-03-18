@@ -1,6 +1,6 @@
 # coding: utf-8
 """
-Reporting Module - 报告生成模块
+Reporter Module - 报告生成模块
 
 合并自 html_reporter.py 和 reporter.py，提供完整的回测报告生成功能。
 
@@ -36,7 +36,7 @@ Reporting Module - 报告生成模块
     - generate_index_html(): 生成研究归档索引页
 
 使用示例:
-    >>> from reporting import save_run_outputs, generate_multi_run_report
+    >>> from reporter import save_run_outputs, generate_multi_run_report
     >>> excel_path, config_path, run_id = save_run_outputs(
     ...     output_dir="output",
     ...     df_clean=df,
@@ -70,7 +70,7 @@ from constants import (
     TARGET_CLOSED_TRADES_PER_FOLD,
     LAMBDA_TRADE_PENALTY,
 )
-from evaluation import calculate_risk_metrics, format_metrics_summary, calculate_regime_metrics, calculate_trade_distribution, RegimeDetector, compute_regime_metrics, create_regime_visualization
+from backtester import calculate_risk_metrics, format_metrics_summary, calculate_regime_metrics, calculate_trade_distribution, RegimeDetector, compute_regime_metrics, create_regime_visualization
 
 
 # =============================================================================
@@ -1348,7 +1348,7 @@ def generate_multi_run_report(output_dir: str) -> str:
                 if not os.path.exists(excel_path):
                     continue
 
-                from evaluation import calculate_risk_metrics
+                from backtester import calculate_risk_metrics
 
                 try:
                     equity_df = pd.read_excel(excel_path, sheet_name="EquityCurve")

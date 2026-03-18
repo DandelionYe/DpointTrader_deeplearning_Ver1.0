@@ -138,10 +138,10 @@ from utils import (
     load_manifest, find_latest_experiment, replay_from_manifest, list_experiments,
     get_ticker_list,
 )
-from data import load_stock_excel, recommend_n_folds
-from training import random_search_train, train_final_model_and_dpoint
-from evaluation import backtest_from_dpoint, compute_buy_and_hold, calculate_risk_metrics, format_metrics_summary
-from reporting import save_run_outputs, find_latest_run
+from data_loader import load_stock_excel, recommend_n_folds
+from trainer import random_search_train, train_final_model_and_dpoint
+from backtester import backtest_from_dpoint, compute_buy_and_hold, calculate_risk_metrics, format_metrics_summary
+from reporter import save_run_outputs, find_latest_run
 
 
 # ====== 数据路径配置 ======
@@ -182,7 +182,7 @@ def _find_latest_run_in_experiments(output_dir: str) -> Optional[Tuple[int, str,
 
     返回 (run_id, config_path, xlsx_path) 或 None
     """
-    from reporting import find_latest_run
+    from reporter import find_latest_run
 
     all_candidates: List[Tuple[int, str, str]] = []
     
@@ -757,7 +757,7 @@ def main() -> None:
     # P0: Regime 分层分析
     if getattr(args, 'use_regime_analysis', False):
         try:
-            from evaluation import RegimeDetector, compute_regime_metrics
+            from backtester import RegimeDetector, compute_regime_metrics
             detector = RegimeDetector(
                 ma_short=int(getattr(args, 'regime_ma_short', 5)),
                 ma_long=int(getattr(args, 'regime_ma_long', 20)),

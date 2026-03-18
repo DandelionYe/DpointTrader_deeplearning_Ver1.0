@@ -8,11 +8,11 @@ import pandas as pd
 import pytest
 import os
 import tempfile
-from training import train_final_model_and_dpoint
-from evaluation import backtest_from_dpoint
-from data import walkforward_splits
+from trainer import train_final_model_and_dpoint
+from backtester import backtest_from_dpoint
+from data_loader import walkforward_splits
 from feature_dpoint import build_features_and_labels
-from reporting import save_run_outputs
+from reporter import save_run_outputs
 from models import make_model
 from utils import set_global_seed, get_package_versions
 
@@ -195,14 +195,14 @@ class TestSmokeMinimal:
 @pytest.mark.smoke
 class TestSmokeCLI:
     """Smoke tests for CLI components."""
-    
+
     def test_imports(self):
         """Test that all main modules can be imported."""
         import main_cli
-        import reporting
-        import training
-        import evaluation
-        import data
+        import reporter
+        import trainer
+        import backtester
+        import data_loader
         import utils
         import models
         import feature_dpoint

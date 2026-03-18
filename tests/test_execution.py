@@ -6,7 +6,7 @@ Validates backtester_engine execution logic.
 import numpy as np
 import pandas as pd
 import pytest
-from evaluation import (
+from backtester import (
     backtest_from_dpoint,
     apply_slippage,
     check_execution_feasibility,

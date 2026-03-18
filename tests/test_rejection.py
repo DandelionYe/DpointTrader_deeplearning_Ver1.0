@@ -6,7 +6,7 @@ Validates limit up/down and suspension handling.
 import numpy as np
 import pandas as pd
 import pytest
-from evaluation import (
+from backtester import (
     backtest_from_dpoint,
     check_execution_feasibility,
     _prepare_price_limits,

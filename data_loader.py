@@ -1,4 +1,4 @@
-# data.py
+# data_loader.py
 """
 数据加载与切分模块 (Data Loading and Splitting Module)
 ========================================================
@@ -18,7 +18,7 @@
     - recommend_n_folds: 根据数据量自适应推算合理折数
 
 **使用示例:**
-    >>> from data import load_stock_excel, walkforward_splits
+    >>> from data_loader import load_stock_excel, walkforward_splits
     >>> df, report = load_stock_excel("stock_data.xlsx")
     >>> splits = walkforward_splits(X, y, n_folds=4)
     >>> for (X_train, y_train), (X_val, y_val) in splits:

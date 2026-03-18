@@ -1,6 +1,6 @@
-# training.py
+# trainer.py
 """
-训练模块合并版 - 整合校准、解释器、持久化、搜索引擎和训练优化器。
+训练模块 - 整合校准、解释器、持久化、搜索引擎和训练优化器。
 
 本模块整合了以下五个原文件的功能：
 1. calibration.py - 概率校准模块
@@ -17,7 +17,7 @@
 - 训练优化：最终模型训练和 Dpoint 预测
 
 使用示例：
-    from training import random_search_train, train_final_model_and_dpoint, TrainResult
+    from trainer import random_search_train, train_final_model_and_dpoint, TrainResult
 
     # 执行随机搜索
     result = random_search_train(df_clean, runs=50, seed=42)
@@ -28,10 +28,9 @@
 依赖：
     - constants.py (必须)
     - feature_dpoint.py
-    - model_builder.py
-    - dl_model_builder.py
-    - splitter.py
-    - metrics.py
+    - models.py
+    - data_loader.py
+    - backtester.py
 
 版本历史：
     P0: 基础功能整合，修复多进程缓存、Top-K 池、XGBoost CUDA 检测等问题
@@ -71,8 +70,8 @@ from models import (
     MLP, LSTM, GRU, CNN1D, Transformer,
     _get_device, train_pytorch_model, predict_pytorch_model,
 )
-from data import walkforward_splits, final_holdout_split, walkforward_splits_with_embargo, nested_walkforward_splits
-from evaluation import metric_from_fold_ratios, trade_penalty, backtest_fold_stats
+from data_loader import walkforward_splits, final_holdout_split, walkforward_splits_with_embargo, nested_walkforward_splits
+from backtester import metric_from_fold_ratios, trade_penalty, backtest_fold_stats
 
 # SHAP 和 Permutation Importance 可选导入
 try:

@@ -1,6 +1,6 @@
-# evaluation.py
+# backtester.py
 """
-评估模块 - 合并版
+回测模块 - 合并版
 
 本文件由以下三个文件合并而成：
 1. backtester_engine.py - 回测执行引擎（P04 + P1-3 + P1-4 + P0/P1/P2 增强版）

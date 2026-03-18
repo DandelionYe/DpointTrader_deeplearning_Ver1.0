@@ -57,17 +57,17 @@ All features in `X_t` are built exclusively from data available on or before day
 ```
 main_cli.py  ──────────────────────────────────────────────────────►  Excel + JSON
      │
-     ├── data.py                 Load & clean A-share OHLCV Excel
+     ├── data_loader.py          Load & clean A-share OHLCV Excel
      │
-     ├── training.py             Random search with explore/exploit rounds
+     ├── trainer.py              Random search with explore/exploit rounds
      │       ├── feature_dpoint.py   Build feature matrix X and label y
      │       ├── models.py         sklearn models (LogReg, SGD, XGB) + PyTorch models
-     │       ├── data.py           Walk-forward time-series splits
-     │       ├── evaluation.py     Geometric mean equity ratio + trade penalty
+     │       ├── data_loader.py    Walk-forward time-series splits
+     │       ├── backtester.py     Geometric mean equity ratio + trade penalty
      │       └── utils.py          best_so_far.json / best_pool.json
      │
-     ├── evaluation.py           Event-driven backtest with A-share constraints
-     ├── reporting.py            Excel workbook + JSON + HTML report
+     ├── backtester.py           Event-driven backtest with A-share constraints
+     ├── reporter.py             Excel workbook + JSON + HTML report
      └── utils.py                Experiment manifest & reproducibility tools
 
 dpoint_updater.py               Standalone tool: retrain on fresh data and export Dpoint
@@ -150,13 +150,13 @@ The backtester in `evaluation.py` faithfully models A-share market constraints:
 ├── main_cli.py             Entry point — search + backtest + report
 ├── dpoint_updater.py       Retrain on new data and export Dpoint to Excel
 │
-├── data.py                 Excel loader with OHLCV validation + Walk-forward splits
+├── data_loader.py          Excel loader with OHLCV validation + Walk-forward splits
 ├── feature_dpoint.py       Feature engineering (all groups + TA indicators)
 ├── models.py               Model factory (sklearn + PyTorch unified)
 │
-├── training.py             Merged module: random search + calibration + explainer + persistence
-├── evaluation.py           Merged module: backtest engine + risk metrics + regime analysis
-├── reporting.py            Excel workbook + JSON + HTML report
+├── trainer.py              Merged module: random search + calibration + explainer + persistence
+├── backtester.py           Merged module: backtest engine + risk metrics + regime analysis
+├── reporter.py             Excel workbook + JSON + HTML report
 ├── rolling_trainer.py      Rolling retrain scheduler (expanding/rolling window)
 ├── utils.py                Reproducibility tools + experiment manifest
 ├── constants.py            Global constants (penalty weights, filenames)
@@ -183,8 +183,8 @@ The backtester in `evaluation.py` faithfully models A-share market constraints:
 ```
 
 **Merged Modules (Ver3.0):**
-- `training.py` = calibration.py + explainer.py + persistence.py + search_engine.py + trainer_optimizer.py
-- `evaluation.py` = backtester_engine.py + metrics.py + regime.py
+- `trainer.py` = calibration.py + explainer.py + persistence.py + search_engine.py + trainer_optimizer.py
+- `backtester.py` = backtester_engine.py + metrics.py + regime.py
 
 ---
 
