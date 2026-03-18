@@ -8,13 +8,13 @@ import pandas as pd
 import pytest
 import os
 import tempfile
-from trainer_optimizer import train_final_model_and_dpoint
-from backtester_engine import backtest_from_dpoint
-from splitter import walkforward_splits
+from training import train_final_model_and_dpoint
+from evaluation import backtest_from_dpoint
+from data import walkforward_splits
 from feature_dpoint import build_features_and_labels
-from reporter import save_run_outputs
-from model_builder import make_model
-from repro import set_global_seed, get_package_versions
+from reporting import save_run_outputs
+from models import make_model
+from utils import set_global_seed, get_package_versions
 
 
 @pytest.mark.smoke
@@ -199,11 +199,12 @@ class TestSmokeCLI:
     def test_imports(self):
         """Test that all main modules can be imported."""
         import main_cli
-        import reporter
-        import trainer_optimizer
-        import search_engine
-        import backtester_engine
-        import metrics
-        import splitter
-        
+        import reporting
+        import training
+        import evaluation
+        import data
+        import utils
+        import models
+        import feature_dpoint
+
         assert True
