@@ -287,11 +287,10 @@ def check_execution_feasibility(
     if listing_days < min_listing_days:
         return False, "上市天数不足"
 
-    # 6. 检查成交量（使用 amount 成交额，单位：元）
-    # P2 修复：原代码使用 volume（股数），但 min_daily_volume 参数名暗示成交额（元）
-    # 修复为使用 amount 字段，更符合流动性过滤的实际需求
-    daily_amount = row.get("amount", 0)
-    if daily_amount < min_daily_volume:
+    # 6. 检查成交量（使用 volume 字段）
+    # P2 修复：使用 volume 字段进行流动性过滤
+    daily_volume = float(row.get("volume", 0) or 0)
+    if min_daily_volume > 0 and daily_volume < min_daily_volume:
         return False, "成交量过低"
 
     return True, ""
@@ -1240,13 +1239,17 @@ def trade_penalty(closed_trades_per_fold: List[int]) -> float:
     """
     对偏离 TARGET_CLOSED_TRADES_PER_FOLD 的软性惩罚。
     交易太少（过拟合信号稀疏）或太多（信号噪声大）都会受罚。
-    """
-    # 使用本地默认值，避免依赖 constants 模块
-    TARGET_CLOSED_TRADES_PER_FOLD = 10
-    LAMBDA_TRADE_PENALTY = 0.01
     
-    diffs = [abs(int(n) - TARGET_CLOSED_TRADES_PER_FOLD) for n in closed_trades_per_fold]
-    return LAMBDA_TRADE_PENALTY * float(np.mean(diffs)) if diffs else float("inf")
+    在 target 点返回 0.0，偏离 target 返回正值，偏离越远惩罚越大。
+    """
+    from constants import TARGET_CLOSED_TRADES_PER_FOLD
+    
+    if not closed_trades_per_fold:
+        return 1.0
+
+    avg_trades = sum(closed_trades_per_fold) / len(closed_trades_per_fold)
+    target = float(TARGET_CLOSED_TRADES_PER_FOLD)
+    return abs(avg_trades - target) / max(target, 1)
 
 
 def backtest_fold_stats(

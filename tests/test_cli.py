@@ -92,8 +92,8 @@ class TestRunManifest:
     
     def test_get_ticker_list_from_dataframe(self):
         """Test ticker extraction from DataFrame."""
-        from run_manifest import get_ticker_list
-        
+        from utils import get_ticker_list
+
         df = pd.DataFrame({
             "ticker": ["600000", "600001", "600000"],
             "close": [10, 11, 12],
@@ -106,8 +106,8 @@ class TestRunManifest:
     
     def test_get_ticker_list_from_filename(self):
         """Test ticker extraction from filename."""
-        from run_manifest import get_ticker_list
-        
+        from utils import get_ticker_list
+
         df = pd.DataFrame({"close": [10, 11, 12]})
         
         tickers = get_ticker_list(df, "600000_5Y.xlsx")
@@ -116,7 +116,7 @@ class TestRunManifest:
     
     def test_create_manifest(self, tmp_path):
         """Test manifest creation."""
-        from run_manifest import create_manifest
+        from utils import create_manifest
         import os
         exp_dir = str(tmp_path / "exp_001")
         os.makedirs(exp_dir, exist_ok=True)
@@ -142,7 +142,7 @@ class TestRunManifest:
     
     def test_load_manifest(self, tmp_path):
         """Test manifest loading."""
-        from run_manifest import create_manifest, load_manifest
+        from utils import create_manifest, load_manifest
         import os
         exp_dir = str(tmp_path / "exp_001")
         os.makedirs(exp_dir, exist_ok=True)
@@ -165,7 +165,7 @@ class TestRunManifest:
     
     def test_list_experiments(self, tmp_path):
         """Test listing experiments."""
-        from run_manifest import create_manifest, list_experiments
+        from utils import create_manifest, list_experiments
         import os
         exp_dir = str(tmp_path / "exp_001")
         os.makedirs(exp_dir, exist_ok=True)
@@ -214,9 +214,9 @@ class TestCompareRuns:
     
     def test_load_experiment_data(self, tmp_path):
         """Test loading experiment data."""
-        from run_manifest import create_manifest
+        from utils import create_manifest
         from compare_runs import load_experiment_data
-        
+
         exp_dir = tmp_path / "exp_001"
         exp_dir.mkdir()
         
