@@ -6,7 +6,7 @@ Validates risk metrics calculations.
 import numpy as np
 import pandas as pd
 import pytest
-from metrics import (
+from evaluation import (
     metric_from_fold_ratios,
     trade_penalty,
     calculate_risk_metrics,

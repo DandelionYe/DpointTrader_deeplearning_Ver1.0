@@ -6,7 +6,7 @@ Validates A-share trading rules.
 import numpy as np
 import pandas as pd
 import pytest
-from backtester_engine import (
+from evaluation import (
     backtest_from_dpoint,
     COMMISSION_RATE_BUY,
     COMMISSION_RATE_SELL,

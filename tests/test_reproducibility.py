@@ -6,9 +6,9 @@ Ensures deterministic results with fixed seeds.
 import numpy as np
 import pandas as pd
 import pytest
-from repro import set_global_seed, get_git_commit_hash, get_package_versions
-from backtester_engine import backtest_from_dpoint
-from trainer_optimizer import train_final_model_and_dpoint
+from utils import set_global_seed, get_git_commit_hash, get_package_versions
+from evaluation import backtest_from_dpoint
+from training import train_final_model_and_dpoint
 from feature_dpoint import build_features_and_labels
 
 

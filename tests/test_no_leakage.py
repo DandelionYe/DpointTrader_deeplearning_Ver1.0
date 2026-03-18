@@ -6,9 +6,9 @@ Validates that there is no look-ahead bias in the pipeline.
 import numpy as np
 import pandas as pd
 import pytest
-from splitter import walkforward_splits
+from data import walkforward_splits, final_holdout_split
 from feature_dpoint import build_features_and_labels
-from backtester_engine import backtest_from_dpoint
+from evaluation import backtest_from_dpoint
 
 
 class TestNoLeakageSplits:
@@ -178,7 +178,7 @@ class TestHoldoutIsolation:
 
     def test_holdout_not_in_search(self):
         """Test that holdout is not used in search."""
-        from splitter import final_holdout_split
+        from data import final_holdout_split
 
         df = pd.DataFrame({"x": range(500)}, index=range(500))
 

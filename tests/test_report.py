@@ -5,12 +5,12 @@ Tests for report generation functionality.
 import os
 import pandas as pd
 import pytest
-from reporter import (
+from reporting import (
     save_run_outputs,
     find_latest_run,
     escape_excel_formulas,
 )
-from metrics import calculate_risk_metrics
+from evaluation import calculate_risk_metrics
 
 
 class TestReportGeneration:
@@ -35,7 +35,7 @@ class TestReportGeneration:
             df = self._prepare_df(minimal_price_data)
             dpoint = pd.Series(0.5, index=df.index)
             
-            from backtester_engine import backtest_from_dpoint
+            from evaluation import backtest_from_dpoint
             result = backtest_from_dpoint(
                 df,
                 dpoint,
@@ -81,7 +81,7 @@ class TestReportGeneration:
             df = self._prepare_df(minimal_price_data)
             dpoint = pd.Series(0.5, index=df.index)
             
-            from backtester_engine import backtest_from_dpoint
+            from evaluation import backtest_from_dpoint
             result = backtest_from_dpoint(
                 df,
                 dpoint,
@@ -180,8 +180,8 @@ class TestRiskMetricsInReport:
         try:
             df = self._prepare_df(minimal_price_data)
             dpoint = pd.Series(0.5, index=df.index)
-            
-            from backtester_engine import backtest_from_dpoint
+
+            from evaluation import backtest_from_dpoint
             result = backtest_from_dpoint(
                 df,
                 dpoint,

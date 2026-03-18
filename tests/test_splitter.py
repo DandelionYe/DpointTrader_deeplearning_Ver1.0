@@ -6,7 +6,7 @@ Validates walk-forward splitting logic.
 import numpy as np
 import pandas as pd
 import pytest
-from splitter import (
+from data import (
     walkforward_splits,
     final_holdout_split,
     recommend_n_folds,
