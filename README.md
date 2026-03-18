@@ -115,7 +115,7 @@ All PyTorch models support automatic mixed precision (AMP) training on CUDA devi
 
 ## Backtesting Rules
 
-The backtester in `evaluation.py` faithfully models A-share market constraints:
+The backtester in `backtester.py` faithfully models A-share market constraints:
 
 - **Long-only** — no short selling
 - **T+1 approximation** — signal generated at close of day `t`; order executes at the **open price of day `t+1`**
