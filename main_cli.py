@@ -57,52 +57,69 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _ensure_conda_restart_if_needed() -> bool:
+    """
+    P2-4：在 CI 环境外检查并重启 conda 环境。
+    
+    返回 True 表示已重启（当前进程应退出），False 表示无需重启。
+    """
+    # CI 环境下跳过 conda 检查
+    if os.environ.get("CI", "").lower() == "true":
+        return False
+    
+    # 已重启过则跳过
+    if os.environ.get("_ASHARE_RELAUNCHED") == "1":
+        return False
+    
+    # SKIP_CONDA 环境变量设置则跳过
+    if os.environ.get("SKIP_CONDA") == "1":
+        return False
+    
+    _target_env = "ashare_dpoint"
+    _in_correct_env = os.environ.get("CONDA_DEFAULT_ENV") == _target_env
+    
+    if _in_correct_env:
+        return False
+    
+    # 检查 conda 是否可用
+    import shutil
+    if shutil.which("conda") is None:
+        print("[WARNING] conda not found in PATH, skipping conda activation. Set SKIP_CONDA=1 to suppress this warning.")
+        return False
+    
+    # 构造子进程环境：继承当前环境，加入防递归标记
+    _child_env = {**os.environ, "_ASHARE_RELAUNCHED": "1"}
+    
+    if os.name == "nt":  # Windows
+        # P2-4：改用 list 参数，避免 shell=True 的路径注入风险
+        _cmd = [
+            "conda", "run",
+            "--no-capture-output",
+            "-n", _target_env,
+            sys.executable,   # 使用绝对路径的 Python 解释器
+        ] + sys.argv
+        print(f"[INFO] P2-4: 以 conda 环境 '{_target_env}' 重新启动...")
+        subprocess.run(_cmd, env=_child_env, check=True)
+    else:  # Linux / macOS
+        _cmd = [
+            "conda", "run",
+            "--no-capture-output",
+            "-n", _target_env,
+            sys.executable,
+        ] + sys.argv
+        print(f"[INFO] P2-4: 以 conda 环境 '{_target_env}' 重新启动...")
+        subprocess.run(_cmd, env=_child_env, check=True)
+    
+    return True
+
+
 # =========================================================
 # P2-4：conda 激活块 — 防无限递归版
 # =========================================================
 # 核心机制：子进程启动时注入 _ASHARE_RELAUNCHED=1 环境变量；
 # 脚本一进入就检查该变量，若已设置则完全跳过激活逻辑，打破递归。
-_already_relaunched: bool = os.environ.get("_ASHARE_RELAUNCHED") == "1"
-
-# Skip conda check if SKIP_CONDA env var is set
-_skip_conda: bool = os.environ.get("SKIP_CONDA") == "1"
-
-if not _already_relaunched and not _skip_conda:
-    _target_env = "ashare_dpoint"
-    _in_correct_env = os.environ.get("CONDA_DEFAULT_ENV") == _target_env
-
-    if not _in_correct_env:
-        # 检查 conda 是否可用
-        import shutil
-        if shutil.which("conda") is None:
-            print("[WARNING] conda not found in PATH, skipping conda activation. Set SKIP_CONDA=1 to suppress this warning.")
-        else:
-            # 构造子进程环境：继承当前环境，加入防递归标记
-            _child_env = {**os.environ, "_ASHARE_RELAUNCHED": "1"}
-
-            if os.name == "nt":  # Windows
-                # P2-4：改用 list 参数，避免 shell=True 的路径注入风险
-                _cmd = [
-                    "conda", "run",
-                    "--no-capture-output",
-                    "-n", _target_env,
-                    sys.executable,   # 使用绝对路径的 Python 解释器
-                ] + sys.argv
-                print(f"[INFO] P2-4: 以 conda 环境 '{_target_env}' 重新启动...")
-                subprocess.run(_cmd, env=_child_env, check=True)
-            else:  # Linux / macOS
-                _cmd = [
-                    "conda", "run",
-                    "--no-capture-output",
-                    "-n", _target_env,
-                    sys.executable,
-                ] + sys.argv
-                print(f"[INFO] P2-4: 以 conda 环境 '{_target_env}' 重新启动...")
-                subprocess.run(_cmd, env=_child_env, check=True)
-
-            sys.exit(0)
-# =========================================================
-# End P2-4 conda 激活块
+# P2-4 修复（Ver3.0）：移入函数，避免导入时触发
 # =========================================================
 
 
@@ -349,6 +366,10 @@ def _resolve_n_jobs(n_jobs_arg: int) -> int:
 
 
 def main() -> None:
+    # P2-4：在 CI 环境外检查并重启 conda 环境（导入时不触发）
+    if _ensure_conda_restart_if_needed():
+        sys.exit(0)
+    
     parser = argparse.ArgumentParser(description="A-share single-stock ML Dpoint trader (2.0).")
     parser.add_argument("--mode", choices=["first", "continue"], default="first", help="Run mode.")
     parser.add_argument("--data_path", type=str, default=DEFAULT_DATA_PATH, help="Path to Excel data file.")
