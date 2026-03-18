@@ -47,7 +47,7 @@ import logging
 import os
 import sys
 import subprocess
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Tuple
 
 # 配置根 logger，影响整个进程的日志输出
 logging.basicConfig(
