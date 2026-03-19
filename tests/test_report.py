@@ -217,20 +217,15 @@ class TestRiskMetricsInReport:
 
 
 # =========================================================
-# Phase 3: 新增回归测试
+# Phase 3: 新增回归测试 - Holdout 和 config JSON
 # =========================================================
 
 class TestHoldoutMetricHandling:
     """Test holdout metric handling in report generation."""
 
-    def test_save_run_outputs_with_holdout(self, minimal_price_data, temp_output_dir):
-        """Test save_run_outputs with explicit holdout parameters."""
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=100),
-            "open_qfq": 10.0,
-            "close_qfq": 10.5,
-        }).set_index("date")
-        
+    def test_save_run_outputs_with_holdout_in_config_json(self, minimal_price_data, temp_output_dir):
+        """Test that holdout_metric/holdout_equity are written to config JSON."""
+        df = self._prepare_df(minimal_price_data)
         dpoint = pd.Series(0.5, index=df.index)
 
         from backtester import backtest_from_dpoint
@@ -249,7 +244,7 @@ class TestHoldoutMetricHandling:
         }
 
         # 测试显式传入 holdout 参数
-        excel_path, config_path, run_id = save_run_outputs(
+        _, config_path, run_id = save_run_outputs(
             output_dir=temp_output_dir,
             df_clean=df,
             log_notes=[],
@@ -260,20 +255,78 @@ class TestHoldoutMetricHandling:
             search_log=pd.DataFrame(),
             holdout_metric=0.15,
             holdout_equity=115000.0,
-            holdout_calibration_comparison={"brier_score_raw": 0.2},
+            holdout_calibration_comparison={"brier_score_raw": 0.2, "ece_raw": 0.1},
         )
 
-        assert os.path.exists(excel_path)
-        assert os.path.exists(config_path)
+        # 断言 config JSON 包含 holdout 字段
+        with open(config_path, "r", encoding="utf-8") as f:
+            saved_config = json.load(f)
+
+        assert saved_config.get("holdout_metric") == 0.15, \
+            "holdout_metric should be written to config JSON"
+        assert saved_config.get("holdout_equity") == 115000.0, \
+            "holdout_equity should be written to config JSON"
+        assert saved_config.get("holdout_calibration_comparison") is not None, \
+            "holdout_calibration_comparison should be written to config JSON"
+
+    def test_save_run_outputs_calibration_metrics_sheet(self, minimal_price_data, temp_output_dir):
+        """Test that CalibrationMetrics sheet includes holdout_calibration_comparison."""
+        df = self._prepare_df(minimal_price_data)
+        dpoint = pd.Series(0.5, index=df.index)
+
+        from backtester import backtest_from_dpoint
+        result = backtest_from_dpoint(
+            df,
+            dpoint,
+            buy_threshold=0.6,
+            sell_threshold=0.4,
+            confirm_days=2,
+        )
+
+        config = {
+            "feature_config": {},
+            "model_config": {},
+            "trade_config": {"initial_cash": 100000.0},
+            "calibration_config": {"method": "platt"},
+        }
+
+        holdout_cal = {
+            "calibration_method": "platt",
+            "brier_score_raw": 0.25,
+            "brier_score_calibrated": 0.20,
+            "ece_raw": 0.05,
+            "ece_calibrated": 0.03,
+        }
+
+        excel_path, _, _ = save_run_outputs(
+            output_dir=temp_output_dir,
+            df_clean=df,
+            log_notes=[],
+            trades=result.trades,
+            equity_curve=result.equity_curve,
+            config=config,
+            feature_meta={},
+            search_log=pd.DataFrame(),
+            holdout_metric=0.15,
+            holdout_equity=115000.0,
+            holdout_calibration_comparison=holdout_cal,
+        )
+
+        # 读取 Excel 的 CalibrationMetrics sheet
+        xls = pd.ExcelFile(excel_path)
+        assert "CalibrationMetrics" in xls.sheet_names, \
+            "CalibrationMetrics sheet should exist"
+
+        cal_df = pd.read_excel(excel_path, sheet_name="CalibrationMetrics")
+        
+        # 断言包含 holdout 对比信息
+        metrics = cal_df["metric"].tolist()
+        assert any("holdout" in str(m) for m in metrics), \
+            "CalibrationMetrics should include holdout comparison data"
 
     def test_save_run_outputs_without_holdout(self, minimal_price_data, temp_output_dir):
         """Test save_run_outputs without holdout parameters (default None)."""
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=100),
-            "open_qfq": 10.0,
-            "close_qfq": 10.5,
-        }).set_index("date")
-        
+        df = self._prepare_df(minimal_price_data)
         dpoint = pd.Series(0.5, index=df.index)
 
         from backtester import backtest_from_dpoint
@@ -292,7 +345,7 @@ class TestHoldoutMetricHandling:
         }
 
         # 测试不传入 holdout 参数（默认 None）
-        excel_path, config_path, run_id = save_run_outputs(
+        _, config_path, _ = save_run_outputs(
             output_dir=temp_output_dir,
             df_clean=df,
             log_notes=[],
@@ -303,8 +356,14 @@ class TestHoldoutMetricHandling:
             search_log=pd.DataFrame(),
         )
 
-        assert os.path.exists(excel_path)
-        assert os.path.exists(config_path)
+        # 断言 config JSON 中 holdout 字段为 None 或空
+        with open(config_path, "r", encoding="utf-8") as f:
+            saved_config = json.load(f)
+
+        assert saved_config.get("holdout_metric") is None, \
+            "holdout_metric should be None when not provided"
+        assert saved_config.get("holdout_equity") is None, \
+            "holdout_equity should be None when not provided"
 
 
 class TestSplitModeInConfig:
@@ -312,12 +371,7 @@ class TestSplitModeInConfig:
 
     def test_split_mode_walkforward(self, minimal_price_data, temp_output_dir):
         """Test split_mode='walkforward' is saved."""
-        df = pd.DataFrame({
-            "date": pd.date_range("2023-01-01", periods=100),
-            "open_qfq": 10.0,
-            "close_qfq": 10.5,
-        }).set_index("date")
-        
+        df = self._prepare_df(minimal_price_data)
         dpoint = pd.Series(0.5, index=df.index)
 
         from backtester import backtest_from_dpoint

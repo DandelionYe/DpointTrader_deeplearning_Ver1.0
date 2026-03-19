@@ -1005,12 +1005,16 @@ def save_run_outputs(
     df_hash = _hash_dataframe(df_clean)
 
     # ---------- build config rows FIRST ----------
+    # P2: 将 holdout 结果写入 config JSON，与 HTML/Log 保持一致
     config_blob = {
         "run_id": run_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "data_hash": df_hash,
         "best_config": config,
         "feature_meta": feature_meta,
+        "holdout_metric": holdout_metric,
+        "holdout_equity": holdout_equity,
+        "holdout_calibration_comparison": holdout_calibration_comparison or {},
         "notes": {
             "execution_assumption": "Signal uses day t data; order executes on t+1 at t+1 open price (open_qfq). P1-3: changed from t close to t+1 open to remove forward bias.",
             "a_share_constraints": "Long-only, buy before sell, no short, min 100 shares, full-in/out, T+1 approximated via min_hold_days>=1.",
@@ -1198,16 +1202,15 @@ def save_run_outputs(
         for k, v in calibration_config.items():
             calibration_rows.append({"metric": f"calibration.{k}", "value": str(v)})
 
-    # 从 holdout_calibration_comparison 中提取校准对比信息（如果在 feature_meta 中）
-    if isinstance(feature_meta, dict):
-        holdout_cal = feature_meta.get("holdout_calibration_comparison", {})
-        if holdout_cal:
-            calibration_rows.append({"metric": "holdout.comparison.available", "value": "true"})
-            for k, v in holdout_cal.items():
-                if isinstance(v, (int, float)):
-                    calibration_rows.append({"metric": f"holdout.{k}", "value": float(v)})
-                else:
-                    calibration_rows.append({"metric": f"holdout.{k}", "value": str(v)})
+    # P2: 从显式传入的 holdout_calibration_comparison 中提取校准对比信息
+    # 不再从 feature_meta 中读取
+    if holdout_calibration_comparison:
+        calibration_rows.append({"metric": "holdout.comparison.available", "value": "true"})
+        for k, v in holdout_calibration_comparison.items():
+            if isinstance(v, (int, float)):
+                calibration_rows.append({"metric": f"holdout.{k}", "value": float(v)})
+            else:
+                calibration_rows.append({"metric": f"holdout.{k}", "value": str(v)})
 
     calibration_df = pd.DataFrame(calibration_rows) if calibration_rows else None
 

@@ -1,9 +1,9 @@
 # test_trainer_split_mode.py
 """
-Phase 3: 新增回归测试 - Trainer split_mode 和 CV 切分策略
+Phase 3: 回归测试 - Trainer split_mode 和 CV 切分策略
 
 测试目标：
-1. _make_eval_splits 在 use_embargo=True 时返回 embargo split
+1. _make_eval_splits 在 use_embargo=True 时返回 embargo split，且 gap >= embargo_days
 2. _make_eval_splits 在 use_nested_wf=True 时抛出 NotImplementedError
 3. TrainResult holdout 字段在未启用 holdout 时为 None
 """
@@ -16,8 +16,45 @@ from trainer import _make_eval_splits, TrainResult
 class TestMakeEvalSplits:
     """Test _make_eval_splits function."""
 
-    def test_make_eval_splits_uses_embargo_when_enabled(self):
-        """use_embargo=True 时返回 embargo split，且 gap >= embargo_days。"""
+    def test_make_eval_splits_embargo_gap_is_correct(self):
+        """
+        use_embargo=True 时，验证 training 终点和 validation 起点之间的 gap >= embargo_days。
+        
+        这是真正的修复验证点：仅仅比较 validation set size 不够，
+        必须直接验证 gap 是否存在。
+        """
+        n_samples = 200
+        X = pd.DataFrame({
+            "feat1": np.random.rand(n_samples),
+            "feat2": np.random.rand(n_samples),
+        })
+        y = pd.Series(np.random.randint(0, 2, n_samples))
+        
+        embargo_days = 5
+        
+        # 带 embargo 的 walkforward
+        splits_with_embargo = _make_eval_splits(
+            X, y, n_folds=4, train_start_ratio=0.5, wf_min_rows=20,
+            use_embargo=True, embargo_days=embargo_days, use_nested_wf=False,
+        )
+        
+        # 验证每个 fold 的 gap
+        for i, ((X_tr, y_tr), (X_va, y_va)) in enumerate(splits_with_embargo):
+            # 获取 training 集的最后一个索引和 validation 集的第一个索引
+            train_end_idx = X_tr.index[-1]
+            val_start_idx = X_va.index[0]
+            
+            # 计算 gap（索引差 - 1）
+            # 例如：train_end=99, val_start=105，则 gap = 105 - 99 - 1 = 5
+            gap = val_start_idx - train_end_idx - 1
+            
+            # 断言：gap >= embargo_days
+            assert gap >= embargo_days, \
+                f"Fold {i}: gap={gap} < embargo_days={embargo_days}. " \
+                f"train_end_idx={train_end_idx}, val_start_idx={val_start_idx}"
+
+    def test_make_eval_splits_no_embargo_gap_is_zero(self):
+        """use_embargo=False 时，验证 training 终点和 validation 起点相邻（gap=0）。"""
         n_samples = 200
         X = pd.DataFrame({
             "feat1": np.random.rand(n_samples),
@@ -31,31 +68,17 @@ class TestMakeEvalSplits:
             use_embargo=False, embargo_days=0, use_nested_wf=False,
         )
         
-        # 带 embargo 的 walkforward
-        splits_with_embargo = _make_eval_splits(
-            X, y, n_folds=4, train_start_ratio=0.5, wf_min_rows=20,
-            use_embargo=True, embargo_days=5, use_nested_wf=False,
-        )
-        
-        # 两种切分都应返回有效结果
-        assert len(splits_no_embargo) > 0, "Standard splits should return results"
-        assert len(splits_with_embargo) > 0, "Embargo splits should return results"
-        
-        # 验证 embargo split 的训练集结束索引与验证集开始索引之间有 gap
-        # 通过比较两种切分的验证集起始位置来间接验证
-        for i, ((X_tr_ne, y_tr_ne), (X_va_ne, y_va_ne)) in enumerate(splits_no_embargo):
-            if i < len(splits_with_embargo):
-                (X_tr_e, y_tr_e), (X_va_e, y_va_e) = splits_with_embargo[i]
-                
-                # 有 embargo 时，验证集起始索引应更大（向后推移）
-                # 由于索引是连续的，我们比较训练集结束位置
-                train_end_ne = X_tr_ne.index[-1]
-                train_end_e = X_tr_e.index[-1]
-                
-                # 有 embargo 时训练集结束位置应相同或更早（为 gap 留空间）
-                # 实际上验证集起始位置会向后推移 embargo_days
-                assert len(X_va_e) <= len(X_va_ne), \
-                    "Embargo should reduce validation set size (or keep same)"
+        # 验证每个 fold 的 gap
+        for i, ((X_tr, y_tr), (X_va, y_va)) in enumerate(splits_no_embargo):
+            train_end_idx = X_tr.index[-1]
+            val_start_idx = X_va.index[0]
+            
+            # 无 embargo 时，gap 应该为 0（相邻）
+            gap = val_start_idx - train_end_idx - 1
+            
+            assert gap == 0, \
+                f"Fold {i}: gap should be 0 (no embargo), got {gap}. " \
+                f"train_end_idx={train_end_idx}, val_start_idx={val_start_idx}"
 
     def test_make_eval_splits_raises_on_use_nested_wf_true(self):
         """use_nested_wf=True 时应抛出 NotImplementedError。"""

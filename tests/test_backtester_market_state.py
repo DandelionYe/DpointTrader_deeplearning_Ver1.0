@@ -1,20 +1,24 @@
 # test_backtester_market_state.py
 """
-Phase 3: 新增回归测试 - Backtester 市场状态和流动性过滤
+Phase 3: 回归测试 - Backtester 市场状态和流动性过滤
 
 测试目标：
 1. _prepare_price_limits 保留真实 is_st/listing_days/suspended 列
 2. check_execution_feasibility 默认使用 amount 进行流动性过滤
 3. legacy min_daily_volume 参数仍然可用
-4. buy-side layered slippage 使用估算订单金额
+4. buy-side layered slippage 在 _simulate_execution 中使用估算订单金额
 """
 import pandas as pd
+import numpy as np
 import pytest
+from unittest.mock import patch, MagicMock
 from backtester import (
     check_execution_feasibility,
     apply_layered_slippage,
     _prepare_price_limits,
     DEFAULT_MIN_DAILY_AMOUNT,
+    _simulate_execution,
+    _build_signal_frame,
 )
 
 
@@ -67,7 +71,7 @@ class TestCheckExecutionFeasibility:
         is_feasible, reason = check_execution_feasibility(row, "BUY")
 
         assert is_feasible == False, "Should reject due to low amount"
-        assert "成交额过低" in reason or "amount" in reason.lower(), f"Wrong reject reason: {reason}"
+        assert "成交额过低" in reason, f"Wrong reject reason: {reason}"
 
     def test_check_execution_feasibility_amount_sufficient(self):
         """构造 amount=2_000_000，应通过流动性检查。"""
@@ -107,31 +111,90 @@ class TestCheckExecutionFeasibility:
 
 
 class TestLayeredSlippage:
-    """Test layered slippage uses estimated order value for BUY."""
+    """Test layered slippage in _simulate_execution."""
 
     def test_buy_layered_slippage_uses_estimated_order_value(self):
-        """构造大资金 BUY，断言开启 use_layered_slippage=True 时执行价更差。"""
-        price = 10.0
+        """
+        测试 _simulate_execution 的 BUY 路径是否使用估算的订单金额调用 apply_layered_slippage。
         
-        # 小单（< 10 万）：10 bps
-        small_order_value = 50_000
-        small_slippage_price = apply_layered_slippage(price, "BUY", small_order_value)
-        small_slippage = (small_slippage_price - price) / price * 10000  # bps
-
-        # 大单（> 50 万）：30 bps
-        large_order_value = 1_000_000
-        large_slippage_price = apply_layered_slippage(price, "BUY", large_order_value)
-        large_slippage = (large_slippage_price - price) / price * 10000  # bps
-
-        # 断言大单滑点更高
-        assert large_slippage > small_slippage, f"Large order should have higher slippage"
-        assert abs(small_slippage - 10) < 1, f"Small order slippage should be ~10 bps, got {small_slippage}"
-        assert abs(large_slippage - 30) < 1, f"Large order slippage should be ~30 bps, got {large_slippage}"
+        这是真正的修复点：之前 BUY 侧传入的 order_value 是 0，
+        修复后应该先估算 estimated_buy_shares 和 estimated_order_value。
+        """
+        # 构造最小 signal_frame
+        dates = pd.date_range("2023-01-01", periods=10)
+        signal_frame = pd.DataFrame({
+            "date": dates,
+            "open_qfq": [10.0] * 10,
+            "close_qfq": [10.5] * 10,
+            "dpoint": [0.7] * 10,  # 高于 buy_threshold，触发买入
+            "dp_above_buy": [True] * 10,
+            "dp_below_sell": [False] * 10,
+            "volume": [1000000] * 10,
+            "amount": [10000000] * 10,
+            "suspended": [False] * 10,
+            "is_st": [False] * 10,
+            "listing_days": [100] * 10,
+            "prev_close": [10.0] * 10,
+        }).set_index("date")
+        
+        # 记录 apply_layered_slippage 的调用参数
+        slippage_calls = []
+        
+        original_apply_layered_slippage = apply_layered_slippage
+        
+        def mock_apply_layered_slippage(price, action, order_value):
+            slippage_calls.append({
+                "price": price,
+                "action": action,
+                "order_value": order_value,
+            })
+            return original_apply_layered_slippage(price, action, order_value)
+        
+        with patch('backtester.apply_layered_slippage', side_effect=mock_apply_layered_slippage):
+            # 调用 _simulate_execution，开启 use_layered_slippage
+            trade_rows, equity_rows, notes, exec_stats = _simulate_execution(
+                signal_frame=signal_frame,
+                initial_cash=100000.0,
+                buy_threshold=0.6,
+                sell_threshold=0.4,
+                max_hold_days=20,
+                take_profit=None,
+                stop_loss=None,
+                confirm_days=1,
+                min_hold_days=1,
+                commission_rate_buy=0.0003,
+                commission_rate_sell=0.0013,
+                slippage_bps=20,
+                limit_up_pct=0.10,
+                limit_down_pct=0.10,
+                filter_st=False,
+                min_listing_days=60,
+                min_daily_amount=DEFAULT_MIN_DAILY_AMOUNT,
+                min_daily_volume=None,
+                use_layered_slippage=True,  # 关键：开启分层滑点
+            )
+        
+        # 断言：apply_layered_slippage 被调用
+        assert len(slippage_calls) > 0, "apply_layered_slippage should be called"
+        
+        # 找到 BUY 调用
+        buy_calls = [c for c in slippage_calls if c["action"] == "BUY"]
+        
+        # 断言：BUY 调用存在（有买入信号）
+        assert len(buy_calls) > 0, "Should have at least one BUY call"
+        
+        # 关键断言：BUY 调用的 order_value > 0
+        # 修复前这里是 0，修复后应该是 estimated_order_value
+        for call in buy_calls:
+            assert call["order_value"] > 0, \
+                f"BUY order_value should be > 0, got {call['order_value']}. " \
+                f"This indicates the bug is not fixed: BUY side should estimate order value before calling apply_layered_slippage."
 
     def test_sell_layered_slippage_order_value(self):
-        """SELL 侧使用 shares * price 计算订单金额。"""
+        """测试 SELL 侧使用 shares * price 计算订单金额。"""
+        # 这个测试验证 SELL 侧逻辑保持正确
         price = 10.0
-        shares = 10_000
+        shares = 10000
         order_value = shares * price  # 10 万
         
         slippage_price = apply_layered_slippage(price, "SELL", order_value)

@@ -202,13 +202,13 @@ def _calibrate_predictions(
             - pred_target_raw: 原始预测
             - pred_target_calibrated: 校准后预测
             - pred_target_for_trade: 用于交易的预测（取决于 use_for_threshold）
-            - calibration_metrics: 校准指标
+            - calibration_metrics: 校准指标（在 calibration 集上计算）
             - calibration_failed: 是否校准失败
     """
     method = str(calibration_config.get("method", "none"))
     use_for_threshold = bool(calibration_config.get("use_for_threshold", False))
-    
-    if method == "none" or len(y_calib) < 20:
+
+    if method == "none" or len(y_calib) < 20 or len(y_calib) != len(pred_calib_raw):
         return {
             "pred_target_raw": pred_target_raw,
             "pred_target_calibrated": pred_target_raw,
@@ -216,33 +216,44 @@ def _calibrate_predictions(
             "calibration_metrics": None,
             "calibration_failed": True,
         }
-    
+
     try:
         calibrator = ProbabilityCalibrator(method=method)
         calibrator.fit(y_calib.values, pred_calib_raw.values)
-        
+
         pred_target_calibrated = pd.Series(
             calibrator.transform(pred_target_raw.values),
             index=pred_target_raw.index,
             name=pred_target_raw.name
         )
-        
+
         # 根据 use_for_threshold 决定交易用哪个
         pred_target_for_trade = pred_target_calibrated if use_for_threshold else pred_target_raw
-        
-        # 计算校准指标
-        cal_metrics = compute_all_calibration_metrics(
-            y_calib.values, pred_target_calibrated.values, n_bins=10
+
+        # 计算校准指标 - 在 calibration 集上计算 raw 和 calibrated 指标
+        raw_metrics = compute_all_calibration_metrics(
+            y_calib.values, pred_calib_raw.values, n_bins=10
         )
-        
+        calib_on_calib = calibrator.transform(pred_calib_raw.values)
+        cal_metrics = compute_all_calibration_metrics(
+            y_calib.values, calib_on_calib, n_bins=10
+        )
+
         return {
             "pred_target_raw": pred_target_raw,
             "pred_target_calibrated": pred_target_calibrated,
             "pred_target_for_trade": pred_target_for_trade,
-            "calibration_metrics": cal_metrics,
+            "calibration_metrics": {
+                "brier_score_raw": raw_metrics["brier_score"],
+                "brier_score_calibrated": cal_metrics["brier_score"],
+                "ece_raw": raw_metrics["ece"],
+                "ece_calibrated": cal_metrics["ece"],
+                "mce_raw": raw_metrics["mce"],
+                "mce_calibrated": cal_metrics["mce"],
+            },
             "calibration_failed": False,
         }
-        
+
     except Exception as e:
         logger.warning("Calibration failed on fold %d: %s", fold_idx, e)
         return {
@@ -1592,10 +1603,6 @@ def _eval_candidate(
     device = _get_device()
     fold_idx = 0
 
-    calibration_method = str(candidate.get("calibration_config", {}).get("method", "none"))
-    use_calibration = calibration_method != "none"
-    use_calibrated_threshold = candidate.get("calibration_config", {}).get("use_for_threshold", False)
-
     all_y_true: List[float] = []
     all_y_prob_raw: List[float] = []
     all_y_prob_calibrated: List[float] = []
@@ -1621,37 +1628,22 @@ def _eval_candidate(
             )
             dp_val_raw = predict_dpoint(model, X_va)
 
-        # dp_val 是用于交易的预测值（可能经过校准）
-        dp_val = dp_val_raw.copy()
-
-        if use_calibration and len(y_va) >= 20:
-            try:
-                calibrator = ProbabilityCalibrator(method=calibration_method)
-                calibrator.fit(y_va.values, dp_val_raw.values)
-                dp_val_calibrated = pd.Series(
-                    calibrator.transform(dp_val_raw.values),
-                    index=dp_val_raw.index,
-                    name=dp_val_raw.name
-                )
-
-                # 根据 use_for_threshold 决定是否使用校准后的值进行交易
-                if use_calibrated_threshold:
-                    dp_val = dp_val_calibrated
-                else:
-                    dp_val = dp_val_raw.copy()
-
-                # 记录校准指标（用于报告）
-                cal_metrics = compute_all_calibration_metrics(
-                    y_va.values, dp_val_calibrated.values, n_bins=10
-                )
-                fold_calibration_metrics.append(cal_metrics)
-
-                all_y_true.extend(y_va.values.tolist())
-                all_y_prob_raw.extend(dp_val_raw.values.tolist())
-                all_y_prob_calibrated.extend(dp_val_calibrated.values.tolist())
-            except Exception as e:
-                logger.warning("Calibration failed on fold %d: %s", fold_idx, e)
-                dp_val = dp_val_raw.copy()
+        # 使用 helper 函数进行校准
+        calib_result = _calibrate_predictions(
+            y_calib=y_va,
+            pred_calib_raw=dp_val_raw,
+            pred_target_raw=dp_val_raw,
+            calibration_config=candidate.get("calibration_config", {}),
+            fold_idx=fold_idx,
+        )
+        
+        dp_val = calib_result["pred_target_for_trade"]
+        
+        if calib_result["calibration_metrics"] is not None:
+            fold_calibration_metrics.append(calib_result["calibration_metrics"])
+            all_y_true.extend(y_va.values.tolist())
+            all_y_prob_raw.extend(dp_val_raw.values.tolist())
+            all_y_prob_calibrated.extend(calib_result["pred_target_calibrated"].values.tolist())
 
         fold_stats = backtest_fold_stats(df_clean, X_va, dp_val, trade_cfg)
         equity_end = float(fold_stats["equity_end"])
@@ -1849,38 +1841,21 @@ def _eval_on_holdout(
             # 对 holdout 集预测（用于交易）
             dp_holdout_raw = predict_dpoint(model, X_holdout)
 
-        # dp_val 是用于交易的预测值（可能经过校准）
-        dp_val = dp_holdout_raw.copy()
-
-        if use_calibration and len(y_va) >= 20 and len(dp_va_raw) == len(y_va):
-            try:
-                calibrator = ProbabilityCalibrator(method=calibration_method)
-                # 用 validation 集的预测和标签拟合校准器
-                calibrator.fit(y_va.values, dp_va_raw.values)
-                
-                # 用校准器转换 holdout 集的预测
-                dp_holdout_calibrated = pd.Series(
-                    calibrator.transform(dp_holdout_raw.values),
-                    index=dp_holdout_raw.index,
-                    name=dp_holdout_raw.name
-                )
-                
-                # 根据 use_for_threshold 决定是否使用校准后的值进行交易
-                if use_calibrated_threshold:
-                    dp_val = dp_holdout_calibrated
-                else:
-                    dp_val = dp_holdout_raw.copy()
-
-                # 记录校准指标（用于报告）
-                all_y_true.extend(y_va.values.tolist())  # 用 validation 标签
-                all_y_prob_raw.extend(dp_va_raw.values.tolist())  # 用 validation 预测
-                all_y_prob_calibrated.extend(calibrator.transform(dp_va_raw.values).tolist())  # 用 validation 校准预测
-            except Exception as e:
-                logger.warning("Holdout calibration failed on fold %d: %s", fold_idx, e)
-                dp_val = dp_holdout_raw.copy()
-        elif use_calibration and (len(y_va) < 20 or len(dp_va_raw) != len(y_va)):
-            logger.warning("Holdout calibration skipped on fold %d: insufficient validation samples (y_va=%d, dp_va_raw=%d)", 
-                          fold_idx, len(y_va), len(dp_va_raw))
+        # 使用 helper 函数进行校准
+        calib_result = _calibrate_predictions(
+            y_calib=y_va,
+            pred_calib_raw=dp_va_raw,
+            pred_target_raw=dp_holdout_raw,
+            calibration_config=candidate.get("calibration_config", {}),
+            fold_idx=fold_idx,
+        )
+        
+        dp_val = calib_result["pred_target_for_trade"]
+        
+        if calib_result["calibration_metrics"] is not None:
+            all_y_true.extend(y_va.values.tolist())
+            all_y_prob_raw.extend(dp_va_raw.values.tolist())
+            all_y_prob_calibrated.extend(calib_result["pred_target_calibrated"].values.tolist())
 
         fold_stats = backtest_fold_stats(holdout_df, X_holdout, dp_val, trade_cfg)
         equity_end = float(fold_stats["equity_end"])
