@@ -73,6 +73,215 @@ from models import (
 from data_loader import walkforward_splits, final_holdout_split, walkforward_splits_with_embargo, nested_walkforward_splits
 from backtester import metric_from_fold_ratios, trade_penalty, backtest_fold_stats
 
+
+# =========================================================
+# 统一切分入口函数
+# =========================================================
+def _make_eval_splits(
+    X: pd.DataFrame,
+    y: pd.Series,
+    n_folds: int,
+    train_start_ratio: float,
+    wf_min_rows: int,
+    use_embargo: bool = False,
+    embargo_days: int = 5,
+    use_nested_wf: bool = False,
+) -> List[Tuple[Tuple[pd.DataFrame, pd.Series], Tuple[pd.DataFrame, pd.Series]]]:
+    """
+    统一的评估切分入口函数。
+
+    根据参数选择不同的切分策略：
+        - use_nested_wf=True: 抛出 NotImplementedError（未实现）
+        - use_embargo=True: 使用 walkforward_splits_with_embargo
+        - 否则：使用标准 walkforward_splits
+
+    Args:
+        X: 特征 DataFrame
+        y: 标签 Series
+        n_folds: 验证折数
+        train_start_ratio: 初始训练集比例
+        wf_min_rows: 每折最小行数
+        use_embargo: 是否使用 embargo gap
+        embargo_days: embargo 天数
+        use_nested_wf: 是否使用嵌套 walk-forward
+
+    Returns:
+        切分结果列表
+
+    Raises:
+        NotImplementedError: 当 use_nested_wf=True 时抛出
+    """
+    if use_nested_wf:
+        raise NotImplementedError(
+            "use_nested_wf=True is declared but not integrated into the search loop. "
+            "Do not silently ignore it."
+        )
+    elif use_embargo:
+        return walkforward_splits_with_embargo(
+            X, y,
+            n_folds=n_folds,
+            train_start_ratio=train_start_ratio,
+            min_rows=wf_min_rows,
+            embargo_days=embargo_days,
+        )
+    else:
+        return walkforward_splits(
+            X, y,
+            n_folds=n_folds,
+            train_start_ratio=train_start_ratio,
+            min_rows=wf_min_rows,
+        )
+
+
+# =========================================================
+# Phase 2: 低风险重构 - Helper 函数拆分
+# =========================================================
+
+def _fit_model_and_predict_raw(
+    candidate: Dict[str, Any],
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_target: pd.DataFrame,
+    seed: int,
+    device: str,
+) -> pd.Series:
+    """
+    拟合模型并对目标数据输出原始预测概率。
+
+    Args:
+        candidate: 候选配置字典
+        X_train: 训练集特征
+        y_train: 训练集标签
+        X_target: 目标预测集特征
+        seed: 随机种子
+        device: PyTorch 设备
+
+    Returns:
+        原始预测概率 Series
+    """
+    model_type = str(candidate["model_config"]["model_type"])
+    
+    if model_type in ["mlp", "lstm", "gru", "cnn", "transformer"]:
+        actual_cfg = {**candidate["model_config"], "input_dim": X_train.shape[1]}
+        trained_model = train_pytorch_model(
+            X_train, y_train, actual_cfg, device,
+            X_val=X_train, y_val=y_train  # 使用训练集作为验证集用于 early stopping
+        )
+        return predict_pytorch_model(
+            trained_model, X_target, device,
+            seq_len=int(actual_cfg.get("seq_len", 20))
+        )
+    else:
+        model = make_model(candidate, seed=seed)
+        model.fit(
+            X_train.values if isinstance(model, Pipeline) else X_train,
+            y_train.values if isinstance(model, Pipeline) else y_train,
+        )
+        return predict_dpoint(model, X_target)
+
+
+def _calibrate_predictions(
+    y_calib: pd.Series,
+    pred_calib_raw: pd.Series,
+    pred_target_raw: pd.Series,
+    calibration_config: Dict[str, Any],
+    fold_idx: int,
+) -> Dict[str, Any]:
+    """
+    校准预测概率。
+
+    Args:
+        y_calib: 校准集真实标签
+        pred_calib_raw: 校准集原始预测
+        pred_target_raw: 目标集原始预测
+        calibration_config: 校准配置
+        fold_idx: 折索引（用于日志）
+
+    Returns:
+        包含以下字段的字典:
+            - pred_target_raw: 原始预测
+            - pred_target_calibrated: 校准后预测
+            - pred_target_for_trade: 用于交易的预测（取决于 use_for_threshold）
+            - calibration_metrics: 校准指标
+            - calibration_failed: 是否校准失败
+    """
+    method = str(calibration_config.get("method", "none"))
+    use_for_threshold = bool(calibration_config.get("use_for_threshold", False))
+    
+    if method == "none" or len(y_calib) < 20:
+        return {
+            "pred_target_raw": pred_target_raw,
+            "pred_target_calibrated": pred_target_raw,
+            "pred_target_for_trade": pred_target_raw,
+            "calibration_metrics": None,
+            "calibration_failed": True,
+        }
+    
+    try:
+        calibrator = ProbabilityCalibrator(method=method)
+        calibrator.fit(y_calib.values, pred_calib_raw.values)
+        
+        pred_target_calibrated = pd.Series(
+            calibrator.transform(pred_target_raw.values),
+            index=pred_target_raw.index,
+            name=pred_target_raw.name
+        )
+        
+        # 根据 use_for_threshold 决定交易用哪个
+        pred_target_for_trade = pred_target_calibrated if use_for_threshold else pred_target_raw
+        
+        # 计算校准指标
+        cal_metrics = compute_all_calibration_metrics(
+            y_calib.values, pred_target_calibrated.values, n_bins=10
+        )
+        
+        return {
+            "pred_target_raw": pred_target_raw,
+            "pred_target_calibrated": pred_target_calibrated,
+            "pred_target_for_trade": pred_target_for_trade,
+            "calibration_metrics": cal_metrics,
+            "calibration_failed": False,
+        }
+        
+    except Exception as e:
+        logger.warning("Calibration failed on fold %d: %s", fold_idx, e)
+        return {
+            "pred_target_raw": pred_target_raw,
+            "pred_target_calibrated": pred_target_raw,
+            "pred_target_for_trade": pred_target_raw,
+            "calibration_metrics": None,
+            "calibration_failed": True,
+        }
+
+
+def _aggregate_holdout_calibration_metrics(
+    fold_metrics: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    聚合多折 holdout 校准指标。
+
+    Args:
+        fold_metrics: 每折的校准指标列表
+
+    Returns:
+        平均后的汇总指标字典
+    """
+    if not fold_metrics:
+        return {}
+    
+    valid_metrics = [m for m in fold_metrics if m is not None]
+    if not valid_metrics:
+        return {}
+    
+    # 计算平均值
+    avg_metrics = {
+        "brier_score": float(np.mean([m.get("brier_score", 0) for m in valid_metrics])),
+        "ece": float(np.mean([m.get("ece", 0) for m in valid_metrics])),
+        "mce": float(np.mean([m.get("mce", 0) for m in valid_metrics])),
+    }
+    
+    return avg_metrics
+
 # SHAP 和 Permutation Importance 可选导入
 try:
     import shap
@@ -1325,6 +1534,9 @@ def _eval_candidate(
     train_start_ratio: float,
     wf_min_rows: int,
     computed_feats: Optional[Tuple[pd.DataFrame, pd.Series, FeatureMeta]],
+    use_embargo: bool = False,
+    embargo_days: int = 5,
+    use_nested_wf: bool = False,
 ) -> Tuple[float, float, Dict[str, Any], List[Dict[str, Any]]]:
     """
     评估单个候选配置。
@@ -1333,6 +1545,18 @@ def _eval_candidate(
         computed_feats 现在始终由主进程预计算后传入，不再在 worker 内部
         维护 feat_cache 闭包（多进程下闭包缓存完全无效）。
         当 computed_feats 为 None 时仍支持惰性计算（兼容单独调用）。
+
+    Args:
+        candidate: 候选配置字典
+        df_clean: 清洗后的数据
+        max_features: 最大特征数
+        n_folds: 验证折数
+        train_start_ratio: 初始训练集比例
+        wf_min_rows: 每折最小行数
+        computed_feats: 预计算的特征
+        use_embargo: 是否使用 embargo gap
+        embargo_days: embargo 天数
+        use_nested_wf: 是否使用嵌套 walk-forward
     """
     fold_details: List[Dict[str, Any]] = []
 
@@ -1351,7 +1575,16 @@ def _eval_candidate(
     if len(X.columns) > max_features:
         return (-np.inf, initial_cash, {"skip": "too_many_feats", "n_features": len(X.columns)}, [])
 
-    splits = walkforward_splits(X, y, n_folds=n_folds, train_start_ratio=train_start_ratio, min_rows=wf_min_rows)
+    splits = _make_eval_splits(
+        X=X,
+        y=y,
+        n_folds=n_folds,
+        train_start_ratio=train_start_ratio,
+        wf_min_rows=wf_min_rows,
+        use_embargo=use_embargo,
+        embargo_days=embargo_days,
+        use_nested_wf=use_nested_wf,
+    )
     if not splits:
         return (-np.inf, initial_cash, {"skip": "no_splits"}, [])
 
@@ -1388,28 +1621,37 @@ def _eval_candidate(
             )
             dp_val_raw = predict_dpoint(model, X_va)
 
+        # dp_val 是用于交易的预测值（可能经过校准）
         dp_val = dp_val_raw.copy()
 
         if use_calibration and len(y_va) >= 20:
             try:
                 calibrator = ProbabilityCalibrator(method=calibration_method)
                 calibrator.fit(y_va.values, dp_val_raw.values)
-                dp_val = pd.Series(
+                dp_val_calibrated = pd.Series(
                     calibrator.transform(dp_val_raw.values),
                     index=dp_val_raw.index,
                     name=dp_val_raw.name
                 )
 
+                # 根据 use_for_threshold 决定是否使用校准后的值进行交易
+                if use_calibrated_threshold:
+                    dp_val = dp_val_calibrated
+                else:
+                    dp_val = dp_val_raw.copy()
+
+                # 记录校准指标（用于报告）
                 cal_metrics = compute_all_calibration_metrics(
-                    y_va.values, dp_val.values, n_bins=10
+                    y_va.values, dp_val_calibrated.values, n_bins=10
                 )
                 fold_calibration_metrics.append(cal_metrics)
 
                 all_y_true.extend(y_va.values.tolist())
                 all_y_prob_raw.extend(dp_val_raw.values.tolist())
-                all_y_prob_calibrated.extend(dp_val.values.tolist())
-            except Exception:
-                pass
+                all_y_prob_calibrated.extend(dp_val_calibrated.values.tolist())
+            except Exception as e:
+                logger.warning("Calibration failed on fold %d: %s", fold_idx, e)
+                dp_val = dp_val_raw.copy()
 
         fold_stats = backtest_fold_stats(df_clean, X_va, dp_val, trade_cfg)
         equity_end = float(fold_stats["equity_end"])
@@ -1510,10 +1752,26 @@ def _eval_on_holdout(
     train_start_ratio: float,
     wf_min_rows: int,
     computed_feats: Optional[Tuple[pd.DataFrame, pd.Series, FeatureMeta]],
+    use_embargo: bool = False,
+    embargo_days: int = 5,
+    use_nested_wf: bool = False,
 ) -> Tuple[float, float, Dict[str, Any], List[Dict[str, Any]]]:
     """
     在 holdout 数据上评估候选配置。
     使用搜索阶段相同的特征构建，但在 holdout 数据上进行回测。
+
+    Args:
+        candidate: 候选配置字典
+        search_df: 搜索集数据
+        holdout_df: Holdout 集数据
+        max_features: 最大特征数
+        n_folds: 验证折数
+        train_start_ratio: 初始训练集比例
+        wf_min_rows: 每折最小行数
+        computed_feats: 预计算的特征
+        use_embargo: 是否使用 embargo gap
+        embargo_days: embargo 天数
+        use_nested_wf: 是否使用嵌套 walk-forward
     """
     if computed_feats is None:
         feat_cfg = candidate["feature_config"]
@@ -1532,7 +1790,16 @@ def _eval_on_holdout(
     if len(X_search.columns) > max_features:
         return (-np.inf, float(candidate["trade_config"]["initial_cash"]), {"skip": "too_many_feats", "n_features": len(X_search.columns)}, [])
 
-    splits = walkforward_splits(X_search, y_search, n_folds=n_folds, train_start_ratio=train_start_ratio, min_rows=wf_min_rows)
+    splits = _make_eval_splits(
+        X=X_search,
+        y=y_search,
+        n_folds=n_folds,
+        train_start_ratio=train_start_ratio,
+        wf_min_rows=wf_min_rows,
+        use_embargo=use_embargo,
+        embargo_days=embargo_days,
+        use_nested_wf=use_nested_wf,
+    )
     if not splits:
         return (-np.inf, float(candidate["trade_config"]["initial_cash"]), {"skip": "no_splits"}, [])
 
@@ -1561,7 +1828,13 @@ def _eval_on_holdout(
             actual_cfg = {**candidate["model_config"], "input_dim": X_tr.shape[1]}
             trained_model = train_pytorch_model(X_tr, y_tr, actual_cfg, device,
                                                 X_val=X_va, y_val=y_va)
-            dp_val_raw = predict_pytorch_model(
+            # 对 validation 集预测（用于校准拟合）
+            dp_va_raw = predict_pytorch_model(
+                trained_model, X_va, device,
+                seq_len=int(actual_cfg.get("seq_len", 20))
+            )
+            # 对 holdout 集预测（用于交易）
+            dp_holdout_raw = predict_pytorch_model(
                 trained_model, X_holdout, device,
                 seq_len=int(actual_cfg.get("seq_len", 20))
             )
@@ -1571,25 +1844,43 @@ def _eval_on_holdout(
                 X_tr.values if isinstance(model, Pipeline) else X_tr,
                 y_tr.values if isinstance(model, Pipeline) else y_tr,
             )
-            dp_val_raw = predict_dpoint(model, X_holdout)
+            # 对 validation 集预测（用于校准拟合）
+            dp_va_raw = predict_dpoint(model, X_va)
+            # 对 holdout 集预测（用于交易）
+            dp_holdout_raw = predict_dpoint(model, X_holdout)
 
-        dp_val = dp_val_raw.copy()
+        # dp_val 是用于交易的预测值（可能经过校准）
+        dp_val = dp_holdout_raw.copy()
 
-        if use_calibration and len(y_va) >= 20:
+        if use_calibration and len(y_va) >= 20 and len(dp_va_raw) == len(y_va):
             try:
                 calibrator = ProbabilityCalibrator(method=calibration_method)
-                calibrator.fit(y_va.values, dp_val_raw.values)
-                dp_val = pd.Series(
-                    calibrator.transform(dp_val_raw.values),
-                    index=dp_val_raw.index,
-                    name=dp_val_raw.name
+                # 用 validation 集的预测和标签拟合校准器
+                calibrator.fit(y_va.values, dp_va_raw.values)
+                
+                # 用校准器转换 holdout 集的预测
+                dp_holdout_calibrated = pd.Series(
+                    calibrator.transform(dp_holdout_raw.values),
+                    index=dp_holdout_raw.index,
+                    name=dp_holdout_raw.name
                 )
+                
+                # 根据 use_for_threshold 决定是否使用校准后的值进行交易
+                if use_calibrated_threshold:
+                    dp_val = dp_holdout_calibrated
+                else:
+                    dp_val = dp_holdout_raw.copy()
 
-                all_y_true.extend(y_holdout.values.tolist())
-                all_y_prob_raw.extend(dp_val_raw.values.tolist())
-                all_y_prob_calibrated.extend(dp_val.values.tolist())
-            except Exception:
-                pass
+                # 记录校准指标（用于报告）
+                all_y_true.extend(y_va.values.tolist())  # 用 validation 标签
+                all_y_prob_raw.extend(dp_va_raw.values.tolist())  # 用 validation 预测
+                all_y_prob_calibrated.extend(calibrator.transform(dp_va_raw.values).tolist())  # 用 validation 校准预测
+            except Exception as e:
+                logger.warning("Holdout calibration failed on fold %d: %s", fold_idx, e)
+                dp_val = dp_holdout_raw.copy()
+        elif use_calibration and (len(y_va) < 20 or len(dp_va_raw) != len(y_va)):
+            logger.warning("Holdout calibration skipped on fold %d: insufficient validation samples (y_va=%d, dp_va_raw=%d)", 
+                          fold_idx, len(y_va), len(dp_va_raw))
 
         fold_stats = backtest_fold_stats(holdout_df, X_holdout, dp_val, trade_cfg)
         equity_end = float(fold_stats["equity_end"])
@@ -1662,9 +1953,24 @@ def _multi_seed_evaluation(
     train_start_ratio: float,
     wf_min_rows: int,
     n_seeds: int = 3,
+    use_embargo: bool = False,
+    embargo_days: int = 5,
+    use_nested_wf: bool = False,
 ) -> Dict[str, Any]:
     """
     使用多个随机种子评估候选配置的稳定性。
+
+    Args:
+        candidate: 候选配置字典
+        df_clean: 清洗后的数据
+        max_features: 最大特征数
+        n_folds: 验证折数
+        train_start_ratio: 初始训练集比例
+        wf_min_rows: 每折最小行数
+        n_seeds: 种子数量
+        use_embargo: 是否使用 embargo gap
+        embargo_days: embargo 天数
+        use_nested_wf: 是否使用嵌套 walk-forward
     """
     feat_cfg = candidate["feature_config"]
     computed_feats = build_features_and_labels(df_clean, feat_cfg)
@@ -1690,6 +1996,9 @@ def _multi_seed_evaluation(
             train_start_ratio,
             wf_min_rows,
             computed_feats,
+            use_embargo=use_embargo,
+            embargo_days=embargo_days,
+            use_nested_wf=use_nested_wf,
         )
 
         seed_details.append({
@@ -1740,6 +2049,9 @@ def _parameter_sensitivity_analysis(
     wf_min_rows: int,
     n_perturbations: int = 5,
     perturbation_scale: float = 0.1,
+    use_embargo: bool = False,
+    embargo_days: int = 5,
+    use_nested_wf: bool = False,
 ) -> Dict[str, Any]:
     """
     P2: 参数敏感性分析。
@@ -1754,13 +2066,23 @@ def _parameter_sensitivity_analysis(
         - sell_threshold: ±perturbation_scale
         - model C / alpha / learning_rate: ±perturbation_scale * 100%
 
-    返回：
-        包含各参数扰动结果的敏感性报告
+    Args:
+        candidate: 候选配置字典
+        df_search: 搜索集数据
+        n_folds: 验证折数
+        train_start_ratio: 初始训练集比例
+        wf_min_rows: 每折最小行数
+        n_perturbations: 扰动次数
+        perturbation_scale: 扰动幅度
+        use_embargo: 是否使用 embargo gap
+        embargo_days: embargo 天数
+        use_nested_wf: 是否使用嵌套 walk-forward
     """
     sensitivity_results = []
     base_metric, base_equity, base_info, _ = _eval_candidate(
         candidate, df_search, max_features=100, n_folds=n_folds,
-        train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None
+        train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None,
+        use_embargo=use_embargo, embargo_days=embargo_days, use_nested_wf=use_nested_wf,
     )
 
     if base_metric == -np.inf:
@@ -1783,7 +2105,8 @@ def _parameter_sensitivity_analysis(
 
         m, eq, info, _ = _eval_candidate(
             perturbed_cand, df_search, max_features=100, n_folds=n_folds,
-            train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None
+            train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None,
+            use_embargo=use_embargo, embargo_days=embargo_days, use_nested_wf=use_nested_wf,
         )
 
         if m > -np.inf:
@@ -1809,7 +2132,8 @@ def _parameter_sensitivity_analysis(
 
             m, eq, info, _ = _eval_candidate(
                 perturbed_cand, df_search, max_features=100, n_folds=n_folds,
-                train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None
+                train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None,
+                use_embargo=use_embargo, embargo_days=embargo_days, use_nested_wf=use_nested_wf,
             )
 
             if m > -np.inf:
@@ -1831,7 +2155,8 @@ def _parameter_sensitivity_analysis(
 
             m, eq, info, _ = _eval_candidate(
                 perturbed_cand, df_search, max_features=100, n_folds=n_folds,
-                train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None
+                train_start_ratio=train_start_ratio, wf_min_rows=wf_min_rows, computed_feats=None,
+                use_embargo=use_embargo, embargo_days=embargo_days, use_nested_wf=use_nested_wf,
             )
 
             if m > -np.inf:
@@ -2138,8 +2463,8 @@ class TrainResult:
     not_updated_reason: str
     best_so_far_path: str
     best_pool_path: str
-    holdout_metric: float = -np.inf
-    holdout_equity: float = 0.0
+    holdout_metric: Optional[float] = None
+    holdout_equity: Optional[float] = None
     holdout_fold_details: List[Dict[str, Any]] = field(default_factory=list)
     search_data_rows: int = 0
     holdout_data_rows: int = 0
@@ -2207,9 +2532,9 @@ def random_search_train(
     # --- Holdout split ---
     _search_df = df_clean
     _holdout_df = None
-    holdout_metric = -np.inf
-    holdout_equity = 0.0
-    holdout_fold_details = []
+    holdout_metric: Optional[float] = None
+    holdout_equity: Optional[float] = None
+    holdout_fold_details: List[Dict[str, Any]] = []
     training_notes: List[str] = []  # P2: 提前初始化，供敏感性分析使用
 
     if use_holdout and len(df_clean) >= min_holdout_rows + wf_min_rows * n_folds:
@@ -2263,7 +2588,8 @@ def random_search_train(
         # 首次运行或配置来自外部，必须重新评估
         best_m_raw, best_eq_raw, info_inc, _ = _eval_candidate(
             best_cfg, _search_df, max_features, n_folds,
-            train_start_ratio, wf_min_rows, (X_inc, y_inc, meta_inc)
+            train_start_ratio, wf_min_rows, (X_inc, y_inc, meta_inc),
+            use_embargo=use_embargo, embargo_days=embargo_days, use_nested_wf=use_nested_wf,
         )
         best_m = float(best_m_raw)
         best_eq = float(best_eq_raw)
@@ -2339,6 +2665,9 @@ def random_search_train(
                 train_start_ratio,
                 wf_min_rows,
                 feat_map[config_hash(c["feature_config"])],   # P01：主进程预计算结果
+                use_embargo=use_embargo,
+                embargo_days=embargo_days,
+                use_nested_wf=use_nested_wf,
             )
             for c in round_c
         )
@@ -2434,11 +2763,18 @@ def random_search_train(
     logger.info("SEARCH Search complete: initial_m=%.6f, cand_best_m=%.6f, epsilon=%.6f", initial_m, cand_best_m, epsilon)
     if cand_best_cfg is not None and cand_best_m > initial_m + epsilon:
         updated = True
+        # P2: 写入 split_mode 到 best_config
+        best_cfg = dict(best_cfg)  # 浅拷贝，避免修改原始引用
+        best_cfg["split_mode"] = "walkforward_embargo" if use_embargo else "walkforward"
         save_best_so_far(output_dir, best_cfg, best_m)
-        logger.info("SEARCH Best updated: new best_m=%.6f", best_m)
+        logger.info("SEARCH Best updated: new best_m=%.6f, split_mode=%s", best_m, best_cfg["split_mode"])
     else:
         reason = "not_exceed_epsilon" if cand_best_cfg is not None else "no_valid_cand"
         logger.info("SEARCH Best NOT updated: reason=%s", reason)
+        # 即使未更新，也确保 best_cfg 有 split_mode
+        if "split_mode" not in best_cfg:
+            best_cfg = dict(best_cfg)
+            best_cfg["split_mode"] = "walkforward_embargo" if use_embargo else "walkforward"
 
     # --- 获取最终 feature_meta ---
     final_fhash = config_hash(best_cfg["feature_config"])
@@ -2465,13 +2801,23 @@ def random_search_train(
             train_start_ratio,
             wf_min_rows,
             (X_best, y_best, meta_best),
+            use_embargo=use_embargo,
+            embargo_days=embargo_days,
+            use_nested_wf=use_nested_wf,
         )
-        holdout_metric = holdout_m
-        holdout_equity = holdout_eq
-        holdout_calibration_comparison = holdout_info.get("holdout_calibration_comparison", {})
-        logger.info("SEARCH Holdout metric: %.6f, equity: %.2f", holdout_metric, holdout_equity)
-        if holdout_calibration_comparison:
-            logger.info("SEARCH Holdout calibration: method=%s", holdout_calibration_comparison.get('calibration_method', 'none'))
+        # 仅在评估成功时保存结果（metric > -inf）
+        if holdout_m > -np.inf:
+            holdout_metric = holdout_m
+            holdout_equity = holdout_eq
+            holdout_calibration_comparison = holdout_info.get("holdout_calibration_comparison", {})
+            logger.info("SEARCH Holdout metric: %.6f, equity: %.2f", holdout_metric, holdout_equity)
+            if holdout_calibration_comparison:
+                logger.info("SEARCH Holdout calibration: method=%s", holdout_calibration_comparison.get('calibration_method', 'none'))
+        else:
+            logger.warning("SEARCH Holdout evaluation failed (metric=-inf), setting to None")
+            holdout_metric = None
+            holdout_equity = None
+            holdout_calibration_comparison = {}
     else:
         holdout_fold_details = []
         holdout_calibration_comparison = {}
@@ -2488,6 +2834,9 @@ def random_search_train(
             train_start_ratio,
             wf_min_rows,
             n_seeds=3,
+            use_embargo=use_embargo,
+            embargo_days=embargo_days,
+            use_nested_wf=use_nested_wf,
         )
         logger.info("SEARCH Stability: mean_metric=%.6f, std=%.6f", stability_report.get('mean_metric', -np.inf), stability_report.get('std_metric', 0.0))
 
@@ -2512,6 +2861,9 @@ def random_search_train(
                             train_start_ratio,
                             wf_min_rows,
                             (X_ticker, y_ticker, meta_ticker),
+                            use_embargo=use_embargo,
+                            embargo_days=embargo_days,
+                            use_nested_wf=use_nested_wf,
                         )
                         cross_ticker_results.append({
                             "ticker": ticker_name,
@@ -2534,6 +2886,9 @@ def random_search_train(
             wf_min_rows=wf_min_rows,
             n_perturbations=5,
             perturbation_scale=0.1,
+            use_embargo=use_embargo,
+            embargo_days=embargo_days,
+            use_nested_wf=use_nested_wf,
         )
         stability_report["sensitivity_analysis"] = sensitivity_report
         if sensitivity_report.get("is_sharp"):

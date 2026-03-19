@@ -967,6 +967,10 @@ def save_run_outputs(
     best_model_importance: Optional[Dict[str, Any]] = None,
     use_regime_analysis: bool = False,
     regime_config: Optional[Dict[str, Any]] = None,
+    # P2: 显式传入 holdout 结果，不再通过 feature_meta 传递
+    holdout_metric: Optional[float] = None,
+    holdout_equity: Optional[float] = None,
+    holdout_calibration_comparison: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str, int]:
     """
     保存回测运行输出到 Excel 和 HTML 报告。
@@ -985,6 +989,9 @@ def save_run_outputs(
         best_model_importance: 最佳模型特征重要性
         use_regime_analysis: 是否使用 Regime 分析
         regime_config: Regime 分析配置
+        holdout_metric: Holdout 集指标（显式传入）
+        holdout_equity: Holdout 集权益（显式传入）
+        holdout_calibration_comparison: Holdout 校准对比（显式传入）
 
     Returns:
         (excel_path, config_path, run_id) 元组
@@ -1014,6 +1021,7 @@ def save_run_outputs(
     config_rows.append(("run_id", run_id))
     config_rows.append(("created_at", config_blob["created_at"]))
     config_rows.append(("data_hash", df_hash))
+    # P2: 从 config 中获取 split_mode（由调用方传入）
     config_rows.append(("split_mode", config.get("split_mode", "")))
 
     for k, v in config.get("feature_config", {}).items():
@@ -1286,15 +1294,10 @@ def save_run_outputs(
         try:
             initial_cash = float(config.get("trade_config", {}).get("initial_cash", 100000.0))
 
-            holdout_metric = None
-            holdout_equity = None
-            if isinstance(feature_meta, dict):
-                holdout_metric = feature_meta.get("holdout_metric")
-                holdout_equity = feature_meta.get("holdout_equity")
-
-            calibration_data = None
-            if isinstance(feature_meta, dict):
-                calibration_data = feature_meta.get("holdout_calibration_comparison")
+            # P2: 使用显式传入的 holdout 参数，不再从 feature_meta 读取
+            holdout_metric_val = holdout_metric
+            holdout_equity_val = holdout_equity
+            calibration_data_val = holdout_calibration_comparison
 
             html_path = save_html_report(
                 output_dir=output_dir,
@@ -1304,9 +1307,9 @@ def save_run_outputs(
                 equity_curve=equity_curve,
                 trades=trades,
                 initial_cash=initial_cash,
-                holdout_metric=holdout_metric,
-                holdout_equity=holdout_equity,
-                calibration_data=calibration_data,
+                holdout_metric=holdout_metric_val,
+                holdout_equity=holdout_equity_val,
+                calibration_data=calibration_data_val,
                 feature_importance=best_model_importance,
                 feature_usage=feature_usage_stats,
                 monthly_returns=risk_metrics.get("monthly_returns"),

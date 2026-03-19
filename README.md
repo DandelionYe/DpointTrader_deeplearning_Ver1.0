@@ -127,12 +127,12 @@ The backtester in `backtester.py` faithfully models A-share market constraints:
 - **Buy & Hold benchmark** — computed alongside the strategy for alpha estimation
 
 ### Execution Layer (P0/P1 Features)
-- **Slippage model**: Fixed 20 bps (0.2%) slippage on execution price, with optional layered slippage for large orders
+- **Slippage model**: Fixed 20 bps (0.2%) slippage on execution price, with optional layered slippage for large orders (10/20/30 bps tiers based on order value)
 - **Limit-up/down handling**: Cannot buy on limit-up, cannot sell on limit-down
-- **Suspension handling**: Orders rejected when stock is suspended
-- **ST stock filtering**: Optional filtering of ST stocks
-- **Listing days filter**: Minimum 60 trading days listing requirement
-- **Volume filter**: Minimum daily turnover requirement (default 1M CNY)
+- **Suspension handling**: Orders rejected when stock is suspended (uses external `suspended` column if provided)
+- **ST stock filtering**: Optional filtering of ST stocks (uses external `is_st` column if provided)
+- **Listing days filter**: Minimum 60 trading days listing requirement (uses external `listing_days` column if provided)
+- **Turnover filter**: Minimum daily **turnover (amount in CNY)** requirement (default 1M CNY, uses `amount` field by default; legacy `volume`-based filter available via explicit parameter)
 - **Execution statistics**: Tracks order submission, fill, rejection reasons, and slippage costs
 
 ---
@@ -365,7 +365,7 @@ Each run produces three files in `--output_dir`:
 |---|---|
 | **Trades** | Every trade: entry/exit date, price, PnL, return, status |
 | **EquityCurve** | Daily equity, cash, market value, drawdown, daily returns, Buy & Hold benchmark |
-| **Config** | All feature / model / trade parameters for this run |
+| **Config** | All feature / model / trade parameters for this run (includes `split_mode`) |
 | **Log** | Data loader report, training summary, search log per iteration |
 | **ModelParams** | Feature coefficients and scaler parameters (LogReg/SGD only) |
 | **RiskMetrics** | Complete risk metrics: Sharpe, Sortino, Calmar, Max Drawdown, etc. |
@@ -375,6 +375,19 @@ Each run produces three files in `--output_dir`:
 | **CalibrationMetrics** | Probability calibration results (Brier score, ECE, MCE) |
 | **FeatureUsage** | Feature group usage frequency during search |
 | **FeatureImportance** | Best model feature importance (tree, permutation, SHAP) |
+
+### HTML Report
+
+The HTML report (`run_NNN_report.html`) includes:
+
+- **Key Performance Metrics**: Total return, Sharpe, max drawdown, win rate, etc.
+- **Equity Curve & Drawdown Plot**: Visual charts of strategy performance
+- **Final Holdout Result** (if enabled): Displays holdout metric and equity prominently at the top
+- **Configuration Summary**: All feature/model/trade parameters
+- **Calibration Metrics**: Raw vs calibrated probability comparison
+- **Feature Importance**: Top features by importance
+
+> **Note on Holdout Reporting**: Holdout results are passed explicitly to the report generator (not through `feature_meta`). When holdout is disabled, no holdout section appears in the report.
 
 ---
 
@@ -390,11 +403,16 @@ The optimizer evaluates each candidate using non-overlapping out-of-sample valid
 
 ### Anti-overfitting Mechanisms
 - **Final Holdout Split**: 15% of data held out from search, never touched until final evaluation
-- **Nested Walk-Forward**: Inner CV for model selection within each outer fold
-- **Embargo Gap**: 5-day gap between training and validation to prevent look-ahead bias
-- **Parameter Sensitivity Analysis**: Checks if optimal solution is "too sharp"
-- **Multi-seed Stability**: Top-N candidates re-evaluated with multiple seeds
+- **Embargo Gap**: 5-day gap between training and validation to prevent look-ahead bias from rolling-window features
+- **Parameter Sensitivity Analysis**: Checks if optimal solution is "too sharp" (sensitive to small parameter perturbations)
+- **Multi-seed Stability**: Top-N candidates re-evaluated with multiple seeds to assess robustness
 - **Penalty Terms**: Worst-fold penalty, fold-variance penalty, too-few-trades penalty
+
+> **Note on Nested Walk-Forward**: The `nested_walkforward_splits()` utility exists in `data_loader.py`, but it is **not integrated into the production search loop yet**. Current production split modes are:
+> - `walkforward` — standard walk-forward cross-validation
+> - `walkforward_embargo` — walk-forward with embargo gap
+> 
+> To use embargo, pass `--use_embargo=1 --embargo_days=5` at the CLI.
 
 ### Trade-count penalty
 A soft penalty discourages configurations that generate too few or too many trades per fold. This prevents the optimizer from converging on degenerate solutions (e.g., never trading or trading every day).

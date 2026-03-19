@@ -42,7 +42,8 @@ DEFAULT_LIMIT_UP_PCT: float = 0.10       # 涨停幅度（A 股默认 10%）
 DEFAULT_LIMIT_DOWN_PCT: float = 0.10     # 跌停幅度
 ST_LIMIT_PCT: float = 0.05               # ST 股涨停幅度
 DEFAULT_MIN_LISTING_DAYS: int = 60       # 最小上市天数要求
-DEFAULT_MIN_DAILY_VOLUME: float = 1_000_000.0  # 最小成交量要求（100 万成交额）
+DEFAULT_MIN_DAILY_AMOUNT: float = 1_000_000.0  # 最小日成交额要求（100 万 CNY）
+DEFAULT_MIN_DAILY_VOLUME: float = DEFAULT_MIN_DAILY_AMOUNT  # 兼容别名（legacy）
 DEFAULT_FILTER_ST: bool = True           # 过滤 ST 股
 
 # Regime 常量
@@ -228,7 +229,8 @@ def check_execution_feasibility(
     limit_down_pct: float = DEFAULT_LIMIT_DOWN_PCT,
     filter_st: bool = DEFAULT_FILTER_ST,
     min_listing_days: int = DEFAULT_MIN_LISTING_DAYS,
-    min_daily_volume: float = DEFAULT_MIN_DAILY_VOLUME,
+    min_daily_amount: float = DEFAULT_MIN_DAILY_AMOUNT,
+    min_daily_volume: Optional[float] = None,  # legacy compatibility
 ) -> tuple[bool, str]:
     """
     P0: 检查订单是否可执行。
@@ -238,7 +240,7 @@ def check_execution_feasibility(
     2. 停牌：无有效价格
     3. ST 股过滤（可选）
     4. 上市天数不足过滤（可选）
-    5. 成交量过低过滤（可选）
+    5. 流动性过滤（默认使用成交额 amount，legacy 模式可使用成交量 volume）
 
     参数：
         row: 包含 open_qfq, close_qfq, limit_up, limit_down, suspended 等字段的行
@@ -247,7 +249,8 @@ def check_execution_feasibility(
         limit_down_pct: 跌停幅度
         filter_st: 是否过滤 ST 股
         min_listing_days: 最小上市天数
-        min_daily_volume: 最小日成交额
+        min_daily_amount: 最小日成交额（默认使用）
+        min_daily_volume: 最小日成交量（legacy 兼容，显式指定时使用）
 
     返回：
         (is_feasible, reject_reason)
@@ -287,11 +290,21 @@ def check_execution_feasibility(
     if listing_days < min_listing_days:
         return False, "上市天数不足"
 
-    # 6. 检查成交量（使用 volume 字段）
-    # P2 修复：使用 volume 字段进行流动性过滤
-    daily_volume = float(row.get("volume", 0) or 0)
-    if min_daily_volume > 0 and daily_volume < min_daily_volume:
-        return False, "成交量过低"
+    # 6. 检查流动性
+    # P2 修复：默认使用 amount（成交额），仅当显式指定 min_daily_volume 时才使用 volume（成交量）
+    if min_daily_volume is not None:
+        # legacy 模式：使用 volume
+        daily_liquidity = float(row.get("volume", 0) or 0)
+        threshold = float(min_daily_volume)
+        reject_reason = "成交量过低"
+    else:
+        # 默认模式：使用 amount（成交额）
+        daily_liquidity = float(row.get("amount", 0) or 0)
+        threshold = float(min_daily_amount)
+        reject_reason = "成交额过低"
+
+    if threshold > 0 and daily_liquidity < threshold:
+        return False, reject_reason
 
     return True, ""
 
@@ -633,7 +646,8 @@ def _simulate_execution(
     limit_down_pct: float = DEFAULT_LIMIT_DOWN_PCT,
     filter_st: bool = DEFAULT_FILTER_ST,
     min_listing_days: int = DEFAULT_MIN_LISTING_DAYS,
-    min_daily_volume: float = DEFAULT_MIN_DAILY_VOLUME,
+    min_daily_amount: float = DEFAULT_MIN_DAILY_AMOUNT,
+    min_daily_volume: Optional[float] = None,  # legacy compatibility
     use_layered_slippage: bool = False,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]], List[str], ExecutionStats]:
     """
@@ -695,6 +709,7 @@ def _simulate_execution(
                 limit_down_pct=limit_down_pct,
                 filter_st=filter_st,
                 min_listing_days=min_listing_days,
+                min_daily_amount=min_daily_amount,
                 min_daily_volume=min_daily_volume,
             )
 
@@ -710,8 +725,15 @@ def _simulate_execution(
                 # P0: 执行订单 - 获取滑点后的价格
                 if use_layered_slippage:
                     # P2: 分层滑点
-                    order_value = shares * price_open_t if action == "SELL" else 0
-                    exec_price = apply_layered_slippage(price_open_t, action, order_value)
+                    # P2 修复：BUY 侧先估算订单金额，再计算滑点
+                    if action == "SELL":
+                        order_value = shares * price_open_t
+                        exec_price = apply_layered_slippage(price_open_t, action, order_value)
+                    else:  # BUY
+                        # 先估算可买股数和订单金额
+                        estimated_buy_shares = _calc_buy_shares(cash, price_open_t, commission_rate_buy)
+                        estimated_order_value = estimated_buy_shares * price_open_t
+                        exec_price = apply_layered_slippage(price_open_t, action, estimated_order_value)
                 else:
                     # P0: 固定滑点
                     exec_price = get_execution_price(row, action, slippage_bps)
@@ -883,6 +905,7 @@ def _simulate_execution(
                     limit_down_pct=limit_down_pct,
                     filter_st=filter_st,
                     min_listing_days=min_listing_days,
+                    min_daily_amount=min_daily_amount,
                     min_daily_volume=min_daily_volume,
                 )
 
@@ -1045,7 +1068,8 @@ def backtest_from_dpoint(
     limit_down_pct: float = DEFAULT_LIMIT_DOWN_PCT,
     filter_st: bool = DEFAULT_FILTER_ST,
     min_listing_days: int = DEFAULT_MIN_LISTING_DAYS,
-    min_daily_volume: float = DEFAULT_MIN_DAILY_VOLUME,
+    min_daily_amount: float = DEFAULT_MIN_DAILY_AMOUNT,
+    min_daily_volume: Optional[float] = None,  # legacy compatibility
     use_layered_slippage: bool = False,  # P2: 分层滑点
     mode_note: str = (
         "Execution: signal at t (close), execute at t+1 open. "
@@ -1119,6 +1143,7 @@ def backtest_from_dpoint(
         limit_down_pct=limit_down_pct,
         filter_st=filter_st,
         min_listing_days=min_listing_days,
+        min_daily_amount=min_daily_amount,
         min_daily_volume=min_daily_volume,
         use_layered_slippage=use_layered_slippage,
     )
@@ -1194,6 +1219,9 @@ def _prepare_price_limits(
 ) -> pd.DataFrame:
     """
     P0: 预处理涨跌停和停牌标记。
+    
+    P2 修复：保留外部传入的真实市场状态列（is_st/listing_days/suspended），
+    仅在缺失时才计算默认值。
     """
     df = df.copy()
 
@@ -1209,13 +1237,32 @@ def _prepare_price_limits(
     df["at_limit_down"] = df["open_qfq"] <= df["limit_down_price"]
 
     # 停牌标记（开盘价为 0 或 NaN）
-    df["suspended"] = (df["open_qfq"] <= 0) | df["open_qfq"].isna()
+    # P2 修复：优先保留外部真实值，仅在缺失时计算
+    computed_suspended = (df["open_qfq"] <= 0) | df["open_qfq"].isna()
+    if "suspended" in df.columns:
+        df["suspended"] = (
+            df["suspended"].fillna(False).astype(bool) | computed_suspended
+        )
+    else:
+        df["suspended"] = computed_suspended
 
-    # ST 标记（需要从外部数据源传入，这里默认 False）
-    df["is_st"] = False
+    # ST 标记
+    # P2 修复：优先保留外部真实值
+    if "is_st" in df.columns:
+        df["is_st"] = df["is_st"].fillna(False).astype(bool)
+    else:
+        df["is_st"] = False
 
-    # 上市天数（从第一行开始计数）
-    df["listing_days"] = range(1, len(df) + 1)
+    # 上市天数
+    # P2 修复：优先保留外部真实值
+    if "listing_days" in df.columns:
+        df["listing_days"] = (
+            pd.to_numeric(df["listing_days"], errors="coerce")
+            .fillna(999999)
+            .astype(int)
+        )
+    else:
+        df["listing_days"] = range(1, len(df) + 1)
 
     return df
 

@@ -736,15 +736,25 @@ def main() -> None:
         # P1: Holdout 校准对比
         if train_res.holdout_calibration_comparison:
             cal = train_res.holdout_calibration_comparison
+            
+            def _fmt_optional_float(v, ndigits=6):
+                """安全格式化可选浮点数，None 或无效值返回 'N/A'。"""
+                if v is None:
+                    return "N/A"
+                try:
+                    return f"{float(v):.{ndigits}f}"
+                except (TypeError, ValueError):
+                    return "N/A"
+            
             log_notes.append("")
             log_notes.append("=== P1 Holdout Calibration Comparison ===")
             log_notes.append(f"Calibration method: {cal.get('calibration_method', 'none')}")
-            log_notes.append(f"Brier Score (raw): {cal.get('brier_score_raw', 'N/A'):.6f}")
-            log_notes.append(f"Brier Score (calibrated): {cal.get('brier_score_calibrated', 'N/A'):.6f}")
-            log_notes.append(f"ECE (raw): {cal.get('ece_raw', 'N/A'):.6f}")
-            log_notes.append(f"ECE (calibrated): {cal.get('ece_calibrated', 'N/A'):.6f}")
-            log_notes.append(f"MCE (raw): {cal.get('mce_raw', 'N/A'):.6f}")
-            log_notes.append(f"MCE (calibrated): {cal.get('mce_calibrated', 'N/A'):.6f}")
+            log_notes.append(f"Brier Score (raw): {_fmt_optional_float(cal.get('brier_score_raw'))}")
+            log_notes.append(f"Brier Score (calibrated): {_fmt_optional_float(cal.get('brier_score_calibrated'))}")
+            log_notes.append(f"ECE (raw): {_fmt_optional_float(cal.get('ece_raw'))}")
+            log_notes.append(f"ECE (calibrated): {_fmt_optional_float(cal.get('ece_calibrated'))}")
+            log_notes.append(f"MCE (raw): {_fmt_optional_float(cal.get('mce_raw'))}")
+            log_notes.append(f"MCE (calibrated): {_fmt_optional_float(cal.get('mce_calibrated'))}")
 
     # P1: Multi-seed 稳定性报告
     if train_res.stability_report is not None:
@@ -972,13 +982,10 @@ def main() -> None:
     )
     
     create_config_json(experiment_dir, manifest)
-    
-    # P1: 将 holdout_calibration_comparison 添加到 feature_meta 中
+
+    # P2: 不再通过 feature_meta 传递 holdout_calibration_comparison，改用显式参数
     artifacts_with_calibration = dict(artifacts)
-    if train_res.holdout_calibration_comparison:
-        artifacts_with_calibration["feature_meta"] = dict(artifacts["feature_meta"])
-        artifacts_with_calibration["feature_meta"]["holdout_calibration_comparison"] = train_res.holdout_calibration_comparison
-    
+
     excel_path, config_path, run_id = save_run_outputs(
         output_dir=experiment_dir,
         df_clean=df_clean,
@@ -999,6 +1006,10 @@ def main() -> None:
             "vol_high_threshold": float(getattr(args, 'regime_vol_high', 0.20)),
             "vol_low_threshold": float(getattr(args, 'regime_vol_low', 0.10)),
         } if getattr(args, 'use_regime_analysis', False) else None,
+        # P2: 显式传入 holdout 结果，不再通过 feature_meta 传递
+        holdout_metric=train_res.holdout_metric,
+        holdout_equity=train_res.holdout_equity,
+        holdout_calibration_comparison=train_res.holdout_calibration_comparison,
     )
 
     print(f"[DONE] Saved run {run_id:03d}")
