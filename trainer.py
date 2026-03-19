@@ -1583,6 +1583,10 @@ def _eval_candidate(
     early_stop_floor = initial_cash * _EARLY_STOP_RATIO
     cand_seed = int(candidate.get("candidate_seed", 42))
 
+    # 校准配置
+    calibration_method = str(candidate.get("calibration_config", {}).get("method", "none"))
+    use_calibration = calibration_method != "none"
+
     if len(X.columns) > max_features:
         return (-np.inf, initial_cash, {"skip": "too_many_feats", "n_features": len(X.columns)}, [])
 
@@ -1602,10 +1606,6 @@ def _eval_candidate(
     ratios, equities, closed_trades = [], [], []
     device = _get_device()
     fold_idx = 0
-
-    all_y_true: List[float] = []
-    all_y_prob_raw: List[float] = []
-    all_y_prob_calibrated: List[float] = []
 
     fold_calibration_metrics: List[Dict[str, Any]] = []
 
@@ -1638,12 +1638,9 @@ def _eval_candidate(
         )
         
         dp_val = calib_result["pred_target_for_trade"]
-        
+
         if calib_result["calibration_metrics"] is not None:
             fold_calibration_metrics.append(calib_result["calibration_metrics"])
-            all_y_true.extend(y_va.values.tolist())
-            all_y_prob_raw.extend(dp_val_raw.values.tolist())
-            all_y_prob_calibrated.extend(calib_result["pred_target_calibrated"].values.tolist())
 
         fold_stats = backtest_fold_stats(df_clean, X_va, dp_val, trade_cfg)
         equity_end = float(fold_stats["equity_end"])
@@ -1666,24 +1663,29 @@ def _eval_candidate(
         })
         fold_idx += 1
 
+    # 聚合校准指标：按 fold 平均
     calibration_summary: Dict[str, Any] = {}
-    if use_calibration and all_y_true:
+    if use_calibration and fold_calibration_metrics:
         try:
-            overall_cal_metrics = compute_all_calibration_metrics(
-                np.array(all_y_true), np.array(all_y_prob_calibrated), n_bins=10
-            )
-            raw_cal_metrics = compute_all_calibration_metrics(
-                np.array(all_y_true), np.array(all_y_prob_raw), n_bins=10
-            )
+            metric_keys = [
+                "brier_score_raw",
+                "brier_score_calibrated",
+                "ece_raw",
+                "ece_calibrated",
+                "mce_raw",
+                "mce_calibrated",
+            ]
             calibration_summary = {
                 "calibration_method": calibration_method,
-                "brier_score_raw": raw_cal_metrics["brier_score"],
-                "brier_score_calibrated": overall_cal_metrics["brier_score"],
-                "ece_raw": raw_cal_metrics["ece"],
-                "ece_calibrated": overall_cal_metrics["ece"],
-                "mce_raw": raw_cal_metrics["mce"],
-                "mce_calibrated": overall_cal_metrics["mce"],
             }
+            for key in metric_keys:
+                values = [
+                    float(m[key])
+                    for m in fold_calibration_metrics
+                    if m is not None and key in m and m[key] is not None
+                ]
+                if values:
+                    calibration_summary[key] = float(np.mean(values))
         except Exception:
             calibration_summary = {"calibration_method": calibration_method}
 
@@ -1810,9 +1812,7 @@ def _eval_on_holdout(
     fold_details = []
 
     holdout_calibration_comparison: Dict[str, Any] = {}
-    all_y_true: List[float] = []
-    all_y_prob_raw: List[float] = []
-    all_y_prob_calibrated: List[float] = []
+    holdout_fold_calibration_metrics: List[Dict[str, Any]] = []
 
     for fold_idx, ((X_tr, y_tr), (X_va, y_va)) in enumerate(splits):
         model_type = str(candidate["model_config"]["model_type"])
@@ -1851,11 +1851,9 @@ def _eval_on_holdout(
         )
         
         dp_val = calib_result["pred_target_for_trade"]
-        
+
         if calib_result["calibration_metrics"] is not None:
-            all_y_true.extend(y_va.values.tolist())
-            all_y_prob_raw.extend(dp_va_raw.values.tolist())
-            all_y_prob_calibrated.extend(calib_result["pred_target_calibrated"].values.tolist())
+            holdout_fold_calibration_metrics.append(calib_result["calibration_metrics"])
 
         fold_stats = backtest_fold_stats(holdout_df, X_holdout, dp_val, trade_cfg)
         equity_end = float(fold_stats["equity_end"])
@@ -1875,26 +1873,34 @@ def _eval_on_holdout(
             "n_closed_trades": n_closed,
         })
 
-    if use_calibration and all_y_true:
+    # 聚合 holdout 校准指标：按 fold 平均
+    if use_calibration and holdout_fold_calibration_metrics:
         try:
-            raw_metrics = compute_all_calibration_metrics(
-                np.array(all_y_true), np.array(all_y_prob_raw), n_bins=10
-            )
-            calibrated_metrics = compute_all_calibration_metrics(
-                np.array(all_y_true), np.array(all_y_prob_calibrated), n_bins=10
-            )
+            metric_keys = [
+                "brier_score_raw",
+                "brier_score_calibrated",
+                "ece_raw",
+                "ece_calibrated",
+                "mce_raw",
+                "mce_calibrated",
+            ]
             holdout_calibration_comparison = {
                 "calibration_method": calibration_method,
                 "use_for_threshold": use_calibrated_threshold,
-                "brier_score_raw": raw_metrics["brier_score"],
-                "brier_score_calibrated": calibrated_metrics["brier_score"],
-                "ece_raw": raw_metrics["ece"],
-                "ece_calibrated": calibrated_metrics["ece"],
-                "mce_raw": raw_metrics["mce"],
-                "mce_calibrated": calibrated_metrics["mce"],
             }
+            for key in metric_keys:
+                values = [
+                    float(m[key])
+                    for m in holdout_fold_calibration_metrics
+                    if m is not None and key in m and m[key] is not None
+                ]
+                if values:
+                    holdout_calibration_comparison[key] = float(np.mean(values))
         except Exception:
-            holdout_calibration_comparison = {"calibration_method": calibration_method}
+            holdout_calibration_comparison = {
+                "calibration_method": calibration_method,
+                "use_for_threshold": use_calibrated_threshold,
+            }
 
     geom = metric_from_fold_ratios(all_ratios)
     min_r = float(np.min(all_ratios))
