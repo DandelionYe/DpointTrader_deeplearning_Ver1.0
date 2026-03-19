@@ -24,6 +24,20 @@
 * Fixed fake tests using `try: ... except: pass; assert True` pattern
 * All 110 tests now properly assert conditions
 * Smoke tests now reliably catch regressions
+* **Completed: real smoke tests replace false-positive tests**
+* **Completed: end-to-end CLI smoke test added and wired into CI**
+
+### ⚙️ CLI Conda Environment Handling
+
+* **Changed conda relaunch behavior: CLI no longer auto-relaunches by default**
+* Relaunch only occurs when `--use-conda-env <env>` is explicitly provided
+* Added new CLI arguments:
+  * `--use-conda-env <env_name>`: Explicitly relaunch inside the given conda environment
+  * `--target-conda-env <env_name>`: Expected conda environment name for warning messages (default: `ashare_dpoint`)
+* Default mode now only prints a warning if current environment doesn't match
+* Fixed: `relaunch_in_conda` now uses `python` instead of `sys.executable` to ensure correct interpreter in target environment
+* Added 14 unit tests for conda environment switching logic
+* Removed dead code: `--list_experiments` / `-l` flag
 
 ### 📦 Previous Changes (Ver3.0 - 2026-03-18)
 

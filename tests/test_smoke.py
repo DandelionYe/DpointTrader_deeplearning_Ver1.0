@@ -16,11 +16,7 @@ import pytest
 # Import real modules only
 from trainer import train_final_model_and_dpoint
 from backtester import backtest_from_dpoint
-from data_loader import walkforward_splits, load_stock_excel
-from feature_dpoint import build_features_and_labels
 from reporter import save_run_outputs
-from models import make_model
-from utils import set_global_seed, get_package_versions
 
 
 # =============================================================================

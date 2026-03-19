@@ -163,6 +163,7 @@ The backtester in `backtester.py` faithfully models A-share market constraints:
 │   ├── test_fee_lot.py       Fee and lot size tests
 │   ├── test_metrics.py       Risk metrics tests
 │   ├── test_smoke.py        Smoke tests
+│   ├── test_conda_env.py    Conda environment switching tests
 │   ├── test_cli.py          CLI argument tests
 │   ├── test_reproducibility.py  Reproducibility tests
 │   ├── test_rejection.py    Order rejection logic tests
@@ -225,6 +226,29 @@ A minimum of ~300 trading days is recommended for stable ML training.
 ---
 
 ## Usage
+
+### Conda Environment
+
+**By default, the CLI does NOT automatically relaunch itself in a conda environment.** It only prints a warning if the current environment doesn't match the expected one.
+
+You have two options:
+
+**Option 1: Manual activation (recommended)**
+
+```bash
+conda activate ashare_dpoint
+python main_cli.py --data_path /path/to/stock_data.xlsx
+```
+
+**Option 2: Explicit auto-switching**
+
+```bash
+python main_cli.py --use-conda-env ashare_dpoint --data_path /path/to/stock_data.xlsx
+```
+
+This will automatically relaunch the script inside the `ashare_dpoint` conda environment.
+
+> **Note:** If you explicitly request `--use-conda-env` but conda is not found in PATH, the program will exit with an error.
 
 ### Run a new search
 
@@ -300,7 +324,7 @@ The tool will interactively ask which run to use, then open a file picker for th
 |---|---|---|
 | `--data_path` | (env `ASHARE_DATA_PATH`) | Path to input Excel |
 | `--output_dir` | `./output` | Directory for results |
-| `--runs` | `200` | Number of search iterations |
+| `--runs` | `100` | Number of search iterations |
 | `--mode` | `first` | `first` (fresh) or `continue` |
 | `--initial_cash` | `100000` | Starting capital (yuan) |
 | `--n_folds` | `-1` | Walk-forward folds (-1 = auto-detect based on data size) |
@@ -319,6 +343,8 @@ The tool will interactively ask which run to use, then open a file picker for th
 | `--rolling_window_length` | `None` | Rolling window length (days) |
 | `--retrain_frequency` | `monthly` | Retrain frequency: daily, weekly, monthly, quarterly |
 | `--export_lock` | `` | Export environment lock file |
+| `--use-conda-env` | `None` | Explicitly relaunch inside the given conda environment |
+| `--target-conda-env` | `ashare_dpoint` | Expected conda environment name for warning messages |
 
 ---
 

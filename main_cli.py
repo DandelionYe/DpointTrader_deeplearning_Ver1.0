@@ -58,69 +58,113 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _ensure_conda_restart_if_needed() -> bool:
+def is_in_conda_env(target_env: str) -> bool:
     """
-    P2-4：在 CI 环境外检查并重启 conda 环境。
+    Check if currently running inside the specified conda environment.
     
-    返回 True 表示已重启（当前进程应退出），False 表示无需重启。
+    Args:
+        target_env: The target conda environment name to check against.
+    
+    Returns:
+        True if CONDA_DEFAULT_ENV matches target_env, False otherwise.
     """
-    # CI 环境下跳过 conda 检查
+    return os.environ.get("CONDA_DEFAULT_ENV") == target_env
+
+
+def warn_if_env_mismatch(target_env: str) -> None:
+    """
+    Print a warning if not running in the target conda environment.
+    
+    This function only warns; it does NOT attempt to restart or relaunch.
+    Skips warning in CI environment or when SKIP_CONDA=1 is set.
+    
+    Args:
+        target_env: The expected conda environment name for the warning message.
+    """
+    # CI 环境下跳过
     if os.environ.get("CI", "").lower() == "true":
-        return False
+        return
     
-    # 已重启过则跳过
+    # SKIP_CONDA 设置时跳过
+    if os.environ.get("SKIP_CONDA") == "1":
+        return
+    
+    # 已在目标环境中，无需警告
+    if is_in_conda_env(target_env):
+        return
+    
+    print(
+        f"[WARNING] Current conda env is not '{target_env}'. "
+        f"For reproducible runs, activate it manually first, or run with "
+        f"'--use-conda-env {target_env}'."
+    )
+
+
+def relaunch_in_conda(target_env: str) -> bool:
+    """
+    Relaunch the script inside the specified conda environment.
+    
+    This function is only called when user explicitly passes --use-conda-env.
+    If conda is not found in PATH, it prints an error and exits with code 2.
+    
+    Args:
+        target_env: The conda environment name to relaunch into.
+    
+    Returns:
+        True if relaunch was attempted (parent process should exit),
+        False if no relaunch was needed (already in target env or already relaunched).
+    """
+    # 已重启过则跳过，防递归
     if os.environ.get("_ASHARE_RELAUNCHED") == "1":
         return False
     
-    # SKIP_CONDA 环境变量设置则跳过
-    if os.environ.get("SKIP_CONDA") == "1":
-        return False
-    
-    _target_env = "ashare_dpoint"
-    _in_correct_env = os.environ.get("CONDA_DEFAULT_ENV") == _target_env
-    
-    if _in_correct_env:
+    # 已在目标环境中，无需重启
+    if is_in_conda_env(target_env):
         return False
     
     # 检查 conda 是否可用
     import shutil
     if shutil.which("conda") is None:
-        print("[WARNING] conda not found in PATH, skipping conda activation. Set SKIP_CONDA=1 to suppress this warning.")
-        return False
+        print(f"[ERROR] conda not found in PATH, cannot relaunch into '{target_env}'.")
+        sys.exit(2)
     
     # 构造子进程环境：继承当前环境，加入防递归标记
-    _child_env = {**os.environ, "_ASHARE_RELAUNCHED": "1"}
+    child_env = {**os.environ, "_ASHARE_RELAUNCHED": "1"}
     
-    if os.name == "nt":  # Windows
-        # P2-4：改用 list 参数，避免 shell=True 的路径注入风险
-        _cmd = [
-            "conda", "run",
-            "--no-capture-output",
-            "-n", _target_env,
-            sys.executable,   # 使用绝对路径的 Python 解释器
-        ] + sys.argv
-        print(f"[INFO] P2-4: 以 conda 环境 '{_target_env}' 重新启动...")
-        subprocess.run(_cmd, env=_child_env, check=True)
-    else:  # Linux / macOS
-        _cmd = [
-            "conda", "run",
-            "--no-capture-output",
-            "-n", _target_env,
-            sys.executable,
-        ] + sys.argv
-        print(f"[INFO] P2-4: 以 conda 环境 '{_target_env}' 重新启动...")
-        subprocess.run(_cmd, env=_child_env, check=True)
+    # 构造命令：使用 list 参数，避免 shell=True 的路径注入风险
+    # 注意：使用 "python" 而不是 sys.executable，让 conda run 在目标环境中解析解释器
+    cmd = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        target_env,
+        "python",
+    ] + sys.argv
     
+    print(f"[INFO] Relaunching inside conda env '{target_env}'...")
+    subprocess.run(cmd, env=child_env, check=True)
     return True
 
 
-# =========================================================
-# P2-4：conda 激活块 — 防无限递归版
-# =========================================================
-# 核心机制：子进程启动时注入 _ASHARE_RELAUNCHED=1 环境变量；
-# 脚本一进入就检查该变量，若已设置则完全跳过激活逻辑，打破递归。
-# P2-4 修复（Ver3.0）：移入函数，避免导入时触发
-# =========================================================
+def _handle_conda_env(args) -> None:
+    """
+    Handle conda environment switching based on CLI arguments.
+    
+    - If --use-conda-env is provided, attempt to relaunch into that environment.
+    - Otherwise, just warn if the current environment doesn't match --target-conda-env.
+    
+    Args:
+        args: Parsed argparse namespace.
+    """
+    if args.use_conda_env:
+        # 用户显式要求切换到指定环境
+        if relaunch_in_conda(args.use_conda_env):
+            # 已重启，当前进程应退出
+            sys.exit(0)
+    else:
+        # 默认模式：仅警告，不重启
+        warn_if_env_mismatch(args.target_conda_env)
 
 
 import warnings
@@ -135,7 +179,7 @@ from utils import (
     set_global_seed, get_git_commit_hash, get_package_versions,
     compute_data_hash, export_environment_lock,
     _get_next_experiment_id, create_experiment_dir, create_manifest, create_config_json,
-    load_manifest, find_latest_experiment, replay_from_manifest, list_experiments,
+    load_manifest, find_latest_experiment, replay_from_manifest,
     get_ticker_list,
 )
 from data_loader import load_stock_excel, recommend_n_folds
@@ -366,10 +410,6 @@ def _resolve_n_jobs(n_jobs_arg: int) -> int:
 
 
 def main() -> None:
-    # P2-4：在 CI 环境外检查并重启 conda 环境（导入时不触发）
-    if _ensure_conda_restart_if_needed():
-        sys.exit(0)
-    
     parser = argparse.ArgumentParser(description="A-share single-stock ML Dpoint trader (2.0).")
     parser.add_argument("--mode", choices=["first", "continue"], default="first", help="Run mode.")
     parser.add_argument("--data_path", type=str, default=DEFAULT_DATA_PATH, help="Path to Excel data file.")
@@ -414,6 +454,21 @@ def main() -> None:
     parser.add_argument(
         "--export_lock", type=str, default="",
         help="P2: Export environment lock file",
+    )
+    # P4: Conda 环境管理参数
+    parser.add_argument(
+        "--use-conda-env",
+        type=str,
+        default=None,
+        dest="use_conda_env",
+        help="Explicitly relaunch the script inside the given conda environment. Example: --use-conda-env ashare_dpoint",
+    )
+    parser.add_argument(
+        "--target-conda-env",
+        type=str,
+        default="ashare_dpoint",
+        dest="target_conda_env",
+        help="Expected conda environment name for warning messages (default: ashare_dpoint).",
     )
     # P0: 新增 holdout 相关参数
     parser.add_argument(
@@ -485,13 +540,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # P1: 列出历史实验
-    if "--list_experiments" in sys.argv or "-l" in sys.argv:
-        experiments = list_experiments(args.output_dir)
-        print(f"Found {len(experiments)} experiments:")
-        for exp in experiments:
-            print(f"  exp_{exp['experiment_id']:03d}: {exp['created_at']}, seed={exp['seed']}, hash={exp.get('git_commit_hash', 'unknown')[:8]}")
-        sys.exit(0)
+    # P4: 处理 conda 环境切换逻辑
+    # - 如果 --use-conda-env 不为空，则尝试 relaunch
+    # - 否则仅在当前环境不匹配时打印 warning
+    _handle_conda_env(args)
 
     # P1: Replay 模式处理
     replay_config = None

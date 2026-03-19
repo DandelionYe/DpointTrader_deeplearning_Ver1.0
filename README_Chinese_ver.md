@@ -163,6 +163,7 @@ compare_runs.py     对比历史运行结果
 │   ├── test_fee_lot.py      费用和手数测试
 │   ├── test_metrics.py      风险指标测试
 │   ├── test_smoke.py       冒烟测试
+│   ├── test_conda_env.py   Conda 环境切换逻辑测试
 │   ├── test_cli.py         CLI 参数测试
 │   ├── test_reproducibility.py 可复现性测试
 │   ├── test_rejection.py    订单拒绝逻辑测试
@@ -225,6 +226,29 @@ pip install pandas numpy scikit-learn joblib openpyxl xlsxwriter torch xgboost t
 ---
 
 ## 使用说明
+
+### Conda 环境
+
+**默认情况下，CLI 不会自动重启到 conda 环境中。** 它仅在当前环境与预期环境不匹配时打印警告信息。
+
+你有两个选择：
+
+**选项 1：手动激活（推荐）**
+
+```bash
+conda activate ashare_dpoint
+python main_cli.py --data_path /path/to/stock_data.xlsx
+```
+
+**选项 2：显式自动切换**
+
+```bash
+python main_cli.py --use-conda-env ashare_dpoint --data_path /path/to/stock_data.xlsx
+```
+
+这将自动在 `ashare_dpoint` conda 环境中重新启动脚本。
+
+> **注意：** 如果你显式请求 `--use-conda-env` 但系统中找不到 conda，程序将直接报错退出。
 
 ### 全新搜索
 
@@ -300,7 +324,7 @@ python dpoint_updater.py --output_dir ./output
 |---|---|---|
 | `--data_path` | 环境变量 `ASHARE_DATA_PATH` | 输入 Excel 路径 |
 | `--output_dir` | `./output` | 结果输出目录 |
-| `--runs` | `200` | 搜索迭代次数 |
+| `--runs` | `100` | 搜索迭代次数 |
 | `--mode` | `first` | `first`（全新）或 `continue`（继续） |
 | `--initial_cash` | `100000` | 初始资金（元） |
 | `--n_folds` | `-1` | Walk-forward 折数（-1 = 根据数据量自动推算） |
@@ -319,6 +343,8 @@ python dpoint_updater.py --output_dir ./output
 | `--rolling_window_length` | `None` | 滚动窗口长度（天） |
 | `--retrain_frequency` | `monthly` | 再训练频率：daily, weekly, monthly, quarterly |
 | `--export_lock` | `` | 导出环境锁定文件 |
+| `--use-conda-env` | `None` | 显式在指定 conda 环境中重新启动 |
+| `--target-conda-env` | `ashare_dpoint` | 警告消息中使用的预期 conda 环境名称 |
 
 ---
 

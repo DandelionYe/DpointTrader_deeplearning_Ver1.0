@@ -24,6 +24,20 @@
 * 修复使用 `try: ... except: pass; assert True` 模式的假测试
 * 所有 110 个测试现在都正确断言条件
 * 冒烟测试现在能够可靠捕获回归问题
+* **已完成：真正的冒烟测试替代假阳性测试**
+* **已完成：端到端 CLI 冒烟测试已添加并接入 CI**
+
+### ⚙️ CLI Conda 环境处理
+
+* **调整 conda 重启行为：CLI 默认不再自动重启到 conda 环境**
+* 仅在显式传入 `--use-conda-env <env>` 时才会尝试切换
+* 新增 CLI 参数：
+  * `--use-conda-env <env_name>`：显式在指定 conda 环境中重新启动
+  * `--target-conda-env <env_name>`：警告消息中使用的预期 conda 环境名称（默认：`ashare_dpoint`）
+* 默认模式下仅在当前环境不匹配时打印警告
+* 修复：`relaunch_in_conda` 现在使用 `python` 而非 `sys.executable`，确保使用目标环境中的正确解释器
+* 新增 14 个 conda 环境切换逻辑的单元测试
+* 移除死代码：`--list_experiments` / `-l` 标志
 
 ### 📦 之前的更改 (Ver3.0 - 2026-03-18)
 
