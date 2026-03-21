@@ -132,7 +132,7 @@ The backtester in `backtester.py` faithfully models A-share market constraints:
 - **Suspension handling**: Orders rejected when stock is suspended (uses external `suspended` column if provided)
 - **ST stock filtering**: Optional filtering of ST stocks (uses external `is_st` column if provided)
 - **Listing days filter**: Minimum 60 trading days listing requirement (uses external `listing_days` column if provided)
-- **Turnover filter**: Minimum daily **turnover (amount in CNY)** requirement (default 1M CNY, uses `amount` field by default; legacy `volume`-based filter available via explicit parameter)
+- **Liquidity filter**: Minimum daily turnover / amount is enforced by default (`amount` column); a legacy volume-based filter is only used when explicitly requested
 - **Execution statistics**: Tracks order submission, fill, rejection reasons, and slippage costs
 
 ---
@@ -157,17 +157,12 @@ The backtester in `backtester.py` faithfully models A-share market constraints:
 ├── compare_runs.py         Compare multiple runs
 │
 ├── tests/                  Automated test suite
-│   ├── test_no_leakage.py    Temporal leakage tests
-│   ├── test_splitter.py      Walk-forward splitter tests
-│   ├── test_execution.py     Execution layer tests
-│   ├── test_fee_lot.py       Fee and lot size tests
-│   ├── test_metrics.py       Risk metrics tests
-│   ├── test_smoke.py        Smoke tests
-│   ├── test_conda_env.py    Conda environment switching tests
-│   ├── test_cli.py          CLI argument tests
-│   ├── test_reproducibility.py  Reproducibility tests
-│   ├── test_rejection.py    Order rejection logic tests
-│   └── conftest.py          Test fixtures
+│   ├── leakage / splitter / execution / fee / metrics tests
+│   ├── CLI / conda / reproducibility / rejection tests
+│   ├── report / trainer calibration / split-mode tests
+│   ├── market-state / optional-torch-runtime tests
+│   ├── smoke tests and shared test helpers
+│   └── conftest.py
 │
 ├── requirements.txt        Python dependencies
 ├── requirements-dev.txt    Development + test dependencies
@@ -276,7 +271,7 @@ python main_cli.py --runs 200
   - When you want to explore a fresh search space
   - When you want to change the search strategy
 
-- **`continue`**: Resume from the best configuration found in previous runs. The system loads the best result from `best_so_far.json` and continues searching from there. This is recommended for:
+- **`continue`**: Resume from the latest available experiment under `--output_dir`. The system loads the previous best configuration from the latest experiment/run it can find, then continues random search from that incumbent configuration. This is recommended for:
   - Extending a previous search to find better configurations
   - Running more iterations when the previous search didn't converge
   - The search will still explore randomly but uses the best known result as a starting point
@@ -341,11 +336,18 @@ The tool will interactively ask which run to use, then open a file picker for th
 | `--embargo_days` | `5` | Embargo days between train/val |
 | `--use_sensitivity_analysis` | `1` | Enable parameter sensitivity analysis |
 | `--use_regime_analysis` | `0` | Enable market regime stratified analysis |
-| `--experiment_dir` | `auto` | Experiment-specific output directory |
+| `--regime_ma_short` | `5` | Short MA window for regime detection |
+| `--regime_ma_long` | `20` | Long MA window for regime detection |
+| `--regime_vol_window` | `20` | Volatility window for regime detection |
+| `--regime_vol_high` | `0.20` | High-volatility threshold |
+| `--regime_vol_low` | `0.10` | Low-volatility threshold |
+| `--experiment_dir` | `None` | Custom experiment directory; if omitted, an `exp_XXX` directory is created automatically |
 | `--replay` | `` | Replay from historical experiment |
 | `--rolling_mode` | `` | Rolling retrain mode: expanding, rolling |
 | `--rolling_window_length` | `None` | Rolling window length (days) |
 | `--retrain_frequency` | `monthly` | Retrain frequency: daily, weekly, monthly, quarterly |
+| `--retrain_eval_days` | `30` | Number of days to evaluate after each retrain |
+| `--snapshot_max_keep` | `5` | Maximum number of model snapshots to keep |
 | `--export_lock` | `` | Export environment lock file |
 | `--use-conda-env` | `None` | Explicitly relaunch inside the given conda environment |
 | `--target-conda-env` | `ashare_dpoint` | Expected conda environment name for warning messages |
@@ -354,14 +356,31 @@ The tool will interactively ask which run to use, then open a file picker for th
 
 ## Output Files
 
-Each run produces three files in `--output_dir`:
+By default, each run creates an experiment directory under `--output_dir`:
+
+```text
+output_dir/
+└── exp_XXX/
+    ├── manifest.json
+    ├── config.json
+    ├── run_XXX.xlsx
+    ├── run_XXX_config.json
+    ├── run_XXX_report.html
+    ├── models/
+    └── artifacts/
+```
+
+Main artifacts:
 
 | File | Description |
 |---|---|
-| `run_NNN.xlsx` | Multi-sheet Excel workbook |
-| `run_NNN_config.json` | Full configuration and metadata |
-| `best_so_far.json` | Global best configuration across all runs |
-| `best_pool.json` | Top-10 configurations pool |
+| `manifest.json` | Full experiment manifest: metadata, git hash, package versions, CLI args, best config, and summary metrics |
+| `config.json` | Simplified replay-oriented config |
+| `run_XXX.xlsx` | Multi-sheet Excel report |
+| `run_XXX_config.json` | Run-level config export used by run discovery utilities |
+| `run_XXX_report.html` | Single-run HTML report |
+| `models/` | Saved model snapshots / model-related files |
+| `artifacts/` | Auxiliary artifacts generated during the experiment |
 
 ### Excel sheets
 

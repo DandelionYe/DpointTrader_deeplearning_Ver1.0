@@ -132,7 +132,7 @@ compare_runs.py     对比历史运行结果
 - **停牌处理**: 停牌时订单被拒绝
 - **ST 股过滤**: 可选过滤 ST 股票
 - **上市天数过滤**: 最少 60 个交易日上市要求
-- **成交量过滤**: 最少日成交额要求（默认 100 万元）
+- **流动性过滤**: 默认按日成交额 `amount` 进行最低流动性检查；只有在显式启用 legacy 兼容方式时才按成交量 `volume` 过滤
 - **执行统计**: 记录订单提交/成交/拒绝原因/滑点成本
 
 ---
@@ -157,17 +157,12 @@ compare_runs.py     对比历史运行结果
 ├── compare_runs.py         多次运行对比工具
 │
 ├── tests/                  自动化测试套件
-│   ├── test_no_leakage.py    时序泄露测试
-│   ├── test_splitter.py     Walk-Forward 切分测试
-│   ├── test_execution.py    执行层测试
-│   ├── test_fee_lot.py      费用和手数测试
-│   ├── test_metrics.py      风险指标测试
-│   ├── test_smoke.py       冒烟测试
-│   ├── test_conda_env.py   Conda 环境切换逻辑测试
-│   ├── test_cli.py         CLI 参数测试
-│   ├── test_reproducibility.py 可复现性测试
-│   ├── test_rejection.py    订单拒绝逻辑测试
-│   └── conftest.py         测试 fixtures
+│   ├── 泄露 / 切分 / 执行 / 手续费 / 指标测试
+│   ├── CLI / conda / 可复现性 / 拒单逻辑测试
+│   ├── 报告 / trainer 校准 / split-mode 测试
+│   ├── 市场状态 / optional-torch-runtime 测试
+│   ├── 冒烟测试与共享测试辅助代码
+│   └── conftest.py
 │
 ├── requirements.txt        Python 依赖
 ├── requirements-dev.txt    开发与测试依赖
@@ -276,7 +271,7 @@ python main_cli.py --runs 200
   - 想探索全新搜索空间
   - 想改变搜索策略
 
-- **`continue`**：从之前找到的最佳配置继续搜索。系统会从 `best_so_far.json` 加载最佳结果并在此基础上继续搜索。适用于：
+- **`continue`**：从 `--output_dir` 下最新可用的实验结果继续搜索。系统会自动查找最新实验/运行记录，读取其中的历史最优配置，并在此基础上继续随机搜索。适用于：
   - 延长之前未收敛的搜索
   - 想在已有最佳结果基础上寻找更好的配置
   - 搜索仍会随机探索，但会以已知最佳结果为起点
@@ -341,11 +336,18 @@ python dpoint_updater.py --output_dir ./output
 | `--embargo_days` | `5` | Embargo 天数 |
 | `--use_sensitivity_analysis` | `1` | 启用参数敏感性分析 |
 | `--use_regime_analysis` | `0` | 启用市场状态分层分析 |
-| `--experiment_dir` | `auto` | 实验独立输出目录 |
+| `--regime_ma_short` | `5` | 市场状态识别的短均线窗口 |
+| `--regime_ma_long` | `20` | 市场状态识别的长均线窗口 |
+| `--regime_vol_window` | `20` | 市场状态识别的波动率窗口 |
+| `--regime_vol_high` | `0.20` | 高波动阈值 |
+| `--regime_vol_low` | `0.10` | 低波动阈值 |
+| `--experiment_dir` | `None` | 自定义实验目录；不传时自动创建 `exp_XXX` 目录 |
 | `--replay` | `` | 从历史实验重放 |
 | `--rolling_mode` | `` | 滚动再训练模式：expanding, rolling |
 | `--rolling_window_length` | `None` | 滚动窗口长度（天） |
 | `--retrain_frequency` | `monthly` | 再训练频率：daily, weekly, monthly, quarterly |
+| `--retrain_eval_days` | `30` | 每次再训练后用于评估的天数 |
+| `--snapshot_max_keep` | `5` | 最多保留的模型快照数量 |
 | `--export_lock` | `` | 导出环境锁定文件 |
 | `--use-conda-env` | `None` | 显式在指定 conda 环境中重新启动 |
 | `--target-conda-env` | `ashare_dpoint` | 警告消息中使用的预期 conda 环境名称 |
@@ -354,14 +356,31 @@ python dpoint_updater.py --output_dir ./output
 
 ## 输出文件说明
 
-每次运行在 `--output_dir` 目录下产生以下文件：
+默认情况下，每次运行会在 `--output_dir` 下创建一个实验目录：
+
+```text
+output_dir/
+└── exp_XXX/
+    ├── manifest.json
+    ├── config.json
+    ├── run_XXX.xlsx
+    ├── run_XXX_config.json
+    ├── run_XXX_report.html
+    ├── models/
+    └── artifacts/
+```
+
+主要输出如下：
 
 | 文件 | 说明 |
 |---|---|
-| `run_NNN.xlsx` | 多 SheetExcel 工作簿（主要报告） |
-| `run_NNN_config.json` | 完整配置与元数据 |
-| `best_so_far.json` | 历史所有运行中的全局最优配置 |
-| `best_pool.json` | Top-10 配置候选池 |
+| `manifest.json` | 完整实验清单：包含元数据、git 哈希、依赖版本、CLI 参数、最佳配置与汇总指标 |
+| `config.json` | 用于 replay 的简化配置 |
+| `run_XXX.xlsx` | 多 Sheet Excel 主报告 |
+| `run_XXX_config.json` | 单次运行级别的配置导出，供运行发现与读取逻辑使用 |
+| `run_XXX_report.html` | 单次运行的 HTML 报告 |
+| `models/` | 模型快照或模型相关文件 |
+| `artifacts/` | 实验过程产生的辅助产物 |
 
 ### Excel 各 Sheet 说明
 

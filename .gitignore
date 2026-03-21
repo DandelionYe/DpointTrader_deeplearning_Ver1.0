@@ -21,3 +21,6 @@ __pycache__/
 output/
 .ipynb_checkpoints/
 .pytest_cache/.venv/
+
+.venv/
+.venv/
