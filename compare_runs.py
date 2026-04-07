@@ -86,7 +86,7 @@ def compare_metrics(metrics1: Dict[str, Any], metrics2: Dict[str, Any]) -> list:
         "final_equity",
         "n_trades",
     ]
-    # Holdout 指标（由 main_cli.py 写入 manifest["metrics"]）
+    # Holdout 指标：若实验 manifest 中存在则一并比较
     holdout_keys = [
         "holdout_metric",
         "holdout_equity",

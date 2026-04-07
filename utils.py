@@ -123,10 +123,6 @@ def set_global_seed(seed: int) -> Dict[str, Any]:
     np.random.seed(seed)
 
     # Pandas (基于 NumPy)
-    try:
-        pd.options.mode.use_inf_as_na = True
-    except Exception:
-        pass
 
     # PyTorch
     try:
@@ -281,6 +277,184 @@ def get_ticker_list(df: pd.DataFrame, data_path: str) -> List[str]:
     return ["unknown"]
 
 
+# =============================================================================
+# P1: Basket 多股票支持工具
+# =============================================================================
+
+def discover_baskets(data_root: str) -> List[str]:
+    """
+    发现数据根目录下的所有 basket 文件夹。
+
+    Basket 文件夹定义：
+        - 以 "basket_" 开头的目录
+        - 或包含 *.csv 文件的目录
+
+    Args:
+        data_root: 数据根目录
+
+    Returns:
+        basket 名称列表
+    """
+    if not os.path.isdir(data_root):
+        return []
+
+    baskets = []
+    for entry in os.listdir(data_root):
+        entry_path = os.path.join(data_root, entry)
+        if not os.path.isdir(entry_path):
+            continue
+
+        # 检查是否是 basket 文件夹
+        if entry.startswith("basket_"):
+            baskets.append(entry)
+        else:
+            # 检查是否包含 CSV 文件
+            csv_files = [f for f in os.listdir(entry_path) if f.endswith(".csv")]
+            if csv_files:
+                baskets.append(entry)
+
+    return sorted(baskets)
+
+
+def resolve_basket_path(
+    data_root: str,
+    basket_name: str,
+) -> str:
+    """
+    解析 basket 路径。
+
+    Args:
+        data_root: 数据根目录
+        basket_name: basket 名称
+
+    Returns:
+        basket 文件夹的完整路径
+
+    Raises:
+        FileNotFoundError: basket 不存在
+    """
+    basket_path = os.path.join(data_root, basket_name)
+    if not os.path.isdir(basket_path):
+        raise FileNotFoundError(f"Basket not found: {basket_path}")
+    return basket_path
+
+
+def compute_basket_hash(basket_path: str, file_pattern: str = "*.csv") -> str:
+    """
+    计算整个 basket 的哈希值。
+
+    Args:
+        basket_path: basket 文件夹路径
+        file_pattern: 文件匹配模式
+
+    Returns:
+        SHA-256 哈希值（hex 字符串）
+    """
+    import glob as glob_module
+
+    pattern = os.path.join(basket_path, file_pattern)
+    files = sorted(glob_module.glob(pattern))
+
+    hasher = hashlib.sha256()
+    for file_path in files:
+        # 使用文件名和内容一起 hash
+        hasher.update(os.path.basename(file_path).encode("utf-8"))
+        with open(file_path, "rb") as f:
+            hasher.update(f.read())
+
+    return hasher.hexdigest()
+
+
+def create_basket_manifest(
+    basket_path: str,
+    basket_name: Optional[str] = None,
+    file_pattern: str = "*.csv",
+    output_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    创建 basket manifest 文件。
+
+    Args:
+        basket_path: basket 文件夹路径
+        basket_name: basket 名称（若为 None 则使用文件夹名）
+        file_pattern: 文件匹配模式
+        output_path: 输出路径（若为 None 则保存到 basket 文件夹内）
+
+    Returns:
+        manifest 字典
+    """
+    import glob as glob_module
+
+    if basket_name is None:
+        basket_name = os.path.basename(basket_path.rstrip("/\\"))
+
+    pattern = os.path.join(basket_path, file_pattern)
+    files = sorted(glob_module.glob(pattern))
+
+    tickers = [os.path.splitext(os.path.basename(f))[0] for f in files]
+    basket_hash = compute_basket_hash(basket_path, file_pattern)
+
+    manifest = {
+        "manifest_version": "1.0",
+        "basket_name": basket_name,
+        "basket_path": basket_path,
+        "n_tickers": len(tickers),
+        "tickers": tickers,
+        "file_pattern": file_pattern,
+        "file_format": "csv",
+        "basket_hash": basket_hash[:16],
+        "data_contract_version": "1.0.0",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+    if output_path is None:
+        output_path = os.path.join(basket_path, "manifest.json")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    return manifest
+
+
+def get_basket_info(
+    basket_path: str,
+    file_pattern: str = "*.csv",
+    sample_rows: int = 3,
+) -> Dict[str, Any]:
+    """
+    获取 basket 的基本信息。
+
+    Args:
+        basket_path: basket 文件夹路径
+        file_pattern: 文件匹配模式
+        sample_rows: 采样行数
+
+    Returns:
+        basket 信息字典
+    """
+    import glob as glob_module
+
+    pattern = os.path.join(basket_path, file_pattern)
+    files = sorted(glob_module.glob(pattern))
+
+    if not files:
+        return {"error": f"No files found matching pattern '{file_pattern}'"}
+
+    tickers = [os.path.splitext(os.path.basename(f))[0] for f in files]
+
+    # 采样第一个文件
+    sample_df = pd.read_csv(files[0], nrows=sample_rows)
+    sample_columns = list(sample_df.columns)
+
+    return {
+        "basket_path": basket_path,
+        "n_files": len(files),
+        "tickers": tickers,
+        "sample_columns": sample_columns,
+        "file_pattern": file_pattern,
+    }
+
+
 def create_experiment_dir(output_dir: str, experiment_id: int) -> str:
     """创建单次实验的独立目录"""
     exp_dir = os.path.join(output_dir, f"exp_{experiment_id:03d}")
@@ -301,6 +475,7 @@ def create_manifest(
     cli_args: Dict[str, Any],
     best_config: Optional[Dict[str, Any]] = None,
     metrics: Optional[Dict[str, Any]] = None,
+    search_runs_completed: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     创建实验 manifest.json
@@ -345,6 +520,9 @@ def create_manifest(
 
     if metrics:
         manifest["metrics"] = metrics
+
+    if search_runs_completed is not None:
+        manifest["search_runs_completed"] = int(search_runs_completed)
 
     manifest_path = os.path.join(experiment_dir, "manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -551,6 +729,12 @@ __all__ = [
     "replay_from_manifest",
     "list_experiments",
     "export_data_version_spec",
+    # P1: Basket 支持
+    "discover_baskets",
+    "resolve_basket_path",
+    "compute_basket_hash",
+    "create_basket_manifest",
+    "get_basket_info",
 ]
 
 

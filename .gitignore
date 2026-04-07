@@ -1,26 +1,69 @@
-# Python cache
+# =========================
+# Python
+# =========================
 __pycache__/
-**/__pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
 
-# Office temp files
-~$*
-*.tmp
-
-# Ignore generated outputs
-output/*
-!output/.gitkeep
-
-__pycache__/
-**/__pycache__/
-*.pyc
-*.pyo
-~$*
-*.tmp
-output/
-.ipynb_checkpoints/
-.pytest_cache/.venv/
-
+# =========================
+# Virtual environments
+# =========================
 .venv/
-.venv/
+venv/
+env/
+ENV/
+
+# =========================
+# Test / cache
+# =========================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# =========================
+# Build / packaging
+# =========================
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# =========================
+# IDE / OS
+# =========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs / debug outputs
+# =========================
+*.log
+*_debug.csv
+
+# =========================
+# Local generated result files
+# =========================
+*.xlsx
+
+# =========================
+# Data
+# 默认忽略全部 data 数据文件
+# 但保留一个轻量示例集供测试/演示
+# =========================
+data/*
+!data/basket_runtime_smoke/
+!data/basket_runtime_smoke/*.csv
+
+# =========================
+# Temporary files
+# =========================
+*.tmp
+*.temp
+*.bak

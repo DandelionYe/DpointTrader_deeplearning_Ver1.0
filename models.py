@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Dict, Optional, Tuple
 
@@ -21,6 +22,8 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
+logger = logging.getLogger(__name__)
 
 TORCH_AVAILABLE = False
 TORCH_IMPORT_ERROR: Optional[Exception] = None
@@ -51,7 +54,12 @@ __all__ = [
     "train_pytorch_model", "predict_pytorch_model", "create_sequence_dataset",
     # sklearn 模型构建
     "make_model", "predict_dpoint",
+    "resolve_torch_device", "get_torch_runtime_info",
+    "is_torch_model_type", "is_torch_model_instance",
 ]
+
+
+TORCH_MODEL_TYPES = {"mlp"}
 
 
 class _CpuFallbackDevice:
@@ -89,6 +97,60 @@ def _get_device() -> torch.device:
 # =========================================================
 # 序列数据构建工具
 # =========================================================
+def is_torch_model_type(model_type: str) -> bool:
+    return str(model_type).lower() in TORCH_MODEL_TYPES
+
+
+def is_torch_model_instance(model: Any) -> bool:
+    return isinstance(model, (MLP, LSTM, GRU, CNN1D, Transformer))
+
+
+def get_torch_runtime_info() -> Dict[str, Any]:
+    info: Dict[str, Any] = {
+        "torch_available": TORCH_AVAILABLE,
+        "torch_version": getattr(torch, "__version__", "not_installed") if TORCH_AVAILABLE else "not_installed",
+        "cuda_available": False,
+        "cuda_version": None,
+        "device_count": 0,
+        "device_name": None,
+    }
+
+    if TORCH_AVAILABLE:
+        info["cuda_available"] = bool(torch.cuda.is_available())
+        info["cuda_version"] = getattr(torch.version, "cuda", None)
+        info["device_count"] = int(torch.cuda.device_count())
+        if torch.cuda.is_available():
+            info["device_name"] = torch.cuda.get_device_name(0)
+    elif TORCH_IMPORT_ERROR is not None:
+        info["import_error"] = repr(TORCH_IMPORT_ERROR)
+
+    return info
+
+
+def resolve_torch_device(preferred_device: str = "auto") -> torch.device:
+    preferred = str(preferred_device).lower()
+    if preferred not in {"auto", "cpu", "cuda"}:
+        raise ValueError(f"Unsupported device preference: {preferred_device}")
+
+    if preferred == "cpu":
+        _require_torch("resolve_torch_device")
+        return torch.device("cpu")
+
+    if preferred == "cuda":
+        _require_torch("resolve_torch_device(device='cuda')")
+        if not torch.cuda.is_available():
+            runtime = get_torch_runtime_info()
+            raise RuntimeError(
+                "CUDA was requested but is not available in the current PyTorch runtime. "
+                f"torch={runtime['torch_version']}, cuda_build={runtime['cuda_version']}, "
+                f"cuda_available={runtime['cuda_available']}. "
+                "Install a CUDA-enabled PyTorch build, or run with --device cpu."
+            )
+        return torch.device("cuda")
+
+    return _get_device()
+
+
 def create_sequence_dataset(
     X: pd.DataFrame,
     y: Optional[pd.Series] = None,
@@ -133,11 +195,16 @@ def create_sequence_dataset(
         else:
             dataset = TensorDataset(X_tensor)
 
+    # Keep the default loader path conservative on Windows/CUDA.
+    # Pinned memory is not necessary for this tabular workload and has caused
+    # native runtime instability on some machines.
+    pin_memory = False
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        pin_memory=True,
+        pin_memory=pin_memory,
         num_workers=0,
     )
 
@@ -185,19 +252,32 @@ if TORCH_AVAILABLE:
     class MLP(nn.Module):
         """简单的多层感知机，用于二分类任务（输出 raw logits）。"""
 
-        def __init__(self, input_dim: int, hidden_dim: int, output_dim: int = 1, dropout_rate: float = 0.5):
+        def __init__(
+            self,
+            input_dim: int,
+            hidden_dim: int,
+            output_dim: int = 1,
+            dropout_rate: float = 0.5,
+            hidden_dims: Optional[list[int]] = None,
+        ):
             super().__init__()
-            self.fc1 = nn.Linear(input_dim, hidden_dim)
-            self.relu = nn.ReLU()
-            self.dropout = nn.Dropout(dropout_rate)
-            self.fc2 = nn.Linear(hidden_dim, output_dim)
+            layer_dims = list(hidden_dims) if hidden_dims else [hidden_dim]
+            layers: list[nn.Module] = []
+            prev_dim = input_dim
+
+            for width in layer_dims:
+                layers.append(nn.Linear(prev_dim, width))
+                layers.append(nn.LayerNorm(width))
+                layers.append(nn.GELU())
+                layers.append(nn.Dropout(dropout_rate))
+                prev_dim = width
+
+            self.backbone = nn.Sequential(*layers)
+            self.head = nn.Linear(prev_dim, output_dim)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            x = self.fc1(x)
-            x = self.relu(x)
-            x = self.dropout(x)
-            x = self.fc2(x)
-            return x
+            x = self.backbone(x)
+            return self.head(x)
 
 
     class LSTM(nn.Module):
@@ -454,23 +534,49 @@ def train_pytorch_model(
     input_dim = X_train.shape[1]
 
     hidden_dim = int(config.get("hidden_dim", 64))
+    hidden_dims = [int(v) for v in config.get("hidden_dims", [hidden_dim])]
     d_model = int(config.get("d_model", 64))
     learning_rate = float(config.get("learning_rate", 0.001))
+    weight_decay = float(config.get("weight_decay", 1e-5))
     epochs = int(config.get("epochs", 20))
     batch_size = int(config.get("batch_size", 64))
     dropout_rate = float(config.get("dropout_rate", 0.3))
     seq_len = int(config.get("seq_len", 20))
 
+    train_loader = None
+    val_loader = None
+    X_train_tensor = None
+    y_train_tensor = None
+    X_val_tensor = None
+    y_val_tensor = None
+
     if model_type == "mlp":
-        model = MLP(input_dim=input_dim, hidden_dim=hidden_dim, dropout_rate=dropout_rate)
-        train_loader = create_sequence_dataset(X_train, y_train, seq_len=1, batch_size=batch_size)
-        val_loader = None
+        model = MLP(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            dropout_rate=dropout_rate,
+            hidden_dims=hidden_dims,
+        )
+        X_train_tensor = torch.as_tensor(
+            X_train.to_numpy(dtype=np.float32, copy=False),
+            dtype=torch.float32,
+            device=device,
+        )
+        y_train_tensor = torch.as_tensor(
+            y_train.to_numpy(dtype=np.float32, copy=False).reshape(-1, 1),
+            dtype=torch.float32,
+            device=device,
+        )
         if X_val is not None and y_val is not None:
-            val_loader = create_sequence_dataset(
-                X_val, y_val,
-                seq_len=1,
-                batch_size=batch_size,
-                shuffle=False,
+            X_val_tensor = torch.as_tensor(
+                X_val.to_numpy(dtype=np.float32, copy=False),
+                dtype=torch.float32,
+                device=device,
+            )
+            y_val_tensor = torch.as_tensor(
+                y_val.to_numpy(dtype=np.float32, copy=False).reshape(-1, 1),
+                dtype=torch.float32,
+                device=device,
             )
 
     elif model_type == "lstm":
@@ -548,23 +654,31 @@ def train_pytorch_model(
     model = model.to(device)
 
     if device.type == "cuda":
-        torch.backends.cudnn.benchmark = True
-        torch.set_float32_matmul_precision("high")
+        # Prefer stability over aggressive autotuning for tabular MLP training.
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+        if hasattr(torch, "set_float32_matmul_precision"):
+            torch.set_float32_matmul_precision("high")
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     criterion = nn.BCEWithLogitsLoss()
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=3,
     )
 
-    use_amp: bool = (device.type == "cuda")
+    # Mixed precision is disabled by default here. It adds little value for the
+    # current tabular models and is a frequent source of native crashes on
+    # Windows CUDA stacks.
+    use_amp: bool = False
     scaler = GradScaler(enabled=use_amp)
 
     best_monitor_loss = float("inf")
     best_state_dict = None
     patience_counter = 0
     max_patience = 10
+    effective_batch_size = max(1, batch_size)
 
     for epoch in range(epochs):
         # ---------- 训练阶段 ----------
@@ -572,30 +686,70 @@ def train_pytorch_model(
         total_loss = 0.0
         num_batches = 0
 
-        for batch in train_loader:
-            if len(batch) < 2:
-                continue
-            X_batch, y_batch = batch
-            X_batch = X_batch.to(device, non_blocking=True)
-            y_batch = y_batch.to(device, non_blocking=True)
+        if model_type == "mlp":
+            assert X_train_tensor is not None and y_train_tensor is not None
+            n_train = int(X_train_tensor.shape[0])
+            effective_batch_size = min(effective_batch_size, n_train)
+            permutation = torch.randperm(n_train, device=device)
 
-            optimizer.zero_grad(set_to_none=True)
-            with autocast(device_type=device.type, enabled=use_amp):
-                logits = model(X_batch)
-                loss = criterion(logits, y_batch)
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
+            for start in range(0, n_train, effective_batch_size):
+                batch_idx = permutation[start : start + effective_batch_size]
+                X_batch = X_train_tensor.index_select(0, batch_idx)
+                y_batch = y_train_tensor.index_select(0, batch_idx)
 
-            total_loss += loss.item()
-            num_batches += 1
+                optimizer.zero_grad(set_to_none=True)
+                with autocast(device_type=device.type, enabled=use_amp):
+                    logits = model(X_batch)
+                    loss = criterion(logits, y_batch)
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+
+                total_loss += loss.item()
+                num_batches += 1
+        else:
+            for batch in train_loader:
+                if len(batch) < 2:
+                    continue
+                X_batch, y_batch = batch
+                X_batch = X_batch.to(device)
+                y_batch = y_batch.to(device)
+
+                optimizer.zero_grad(set_to_none=True)
+                with autocast(device_type=device.type, enabled=use_amp):
+                    logits = model(X_batch)
+                    loss = criterion(logits, y_batch)
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+
+                total_loss += loss.item()
+                num_batches += 1
 
         train_loss = total_loss / max(num_batches, 1)
 
         # ---------- 验证阶段（有 val_loader 时才执行）----------
-        if val_loader is not None:
+        if model_type == "mlp" and X_val_tensor is not None and y_val_tensor is not None:
+            model.eval()
+            val_total_loss = 0.0
+            val_batches = 0
+            n_val = int(X_val_tensor.shape[0])
+            val_batch_size = min(effective_batch_size, n_val)
+            with torch.no_grad():
+                for start in range(0, n_val, val_batch_size):
+                    X_batch = X_val_tensor[start : start + val_batch_size]
+                    y_batch = y_val_tensor[start : start + val_batch_size]
+                    with autocast(device_type=device.type, enabled=use_amp):
+                        logits = model(X_batch)
+                        loss = criterion(logits, y_batch)
+                    val_total_loss += loss.item()
+                    val_batches += 1
+            monitor_loss = val_total_loss / max(val_batches, 1)
+        elif val_loader is not None:
             model.eval()
             val_total_loss = 0.0
             val_batches = 0
@@ -604,8 +758,8 @@ def train_pytorch_model(
                     if len(batch) < 2:
                         continue
                     X_batch, y_batch = batch
-                    X_batch = X_batch.to(device, non_blocking=True)
-                    y_batch = y_batch.to(device, non_blocking=True)
+                    X_batch = X_batch.to(device)
+                    y_batch = y_batch.to(device)
                     with autocast(device_type=device.type, enabled=use_amp):
                         logits = model(X_batch)
                         loss = criterion(logits, y_batch)
@@ -669,17 +823,17 @@ def predict_pytorch_model(
                 raise ValueError(f"seq_len ({seq_len}) 超过样本数 ({n_samples})，无法进行序列推理。")
 
             X_seq_all = X_tensor.unfold(0, seq_len, 1).permute(0, 2, 1).contiguous()
-            X_seq_all = X_seq_all.to(device, non_blocking=True)
+            X_seq_all = X_seq_all.to(device)
             logits = model(X_seq_all)
             probs = _logits_to_probs(logits).cpu().numpy().flatten()
             valid_indices = X.index[seq_len - 1:]
             return pd.Series(probs, index=valid_indices, name="dpoint")
 
         else:
-            batch_size = 1024
+            batch_size = 16384 if device.type == "cuda" else 1024
             all_probs = []
             for start in range(0, X_tensor.shape[0], batch_size):
-                batch = X_tensor[start : start + batch_size].to(device, non_blocking=True)
+                batch = X_tensor[start : start + batch_size].to(device)
                 logits = model(batch)
                 all_probs.append(_logits_to_probs(logits).cpu())
             probs = torch.cat(all_probs, dim=0).numpy().flatten()
@@ -746,20 +900,38 @@ def make_model(candidate: Dict[str, Any], seed: int) -> Any:
     if model_type == "xgb":
         xgb = _try_import_xgboost()
         if xgb is None:
-            raise RuntimeError("xgboost_not_installed")
-        xgb_params = dict(model_config["params"])
+            # XGBoost 不可用时，使用 RandomForest 作为备选
+            logger.warning("XGBoost not available, using RandomForest instead")
+            from sklearn.ensemble import RandomForestClassifier
+            clf = RandomForestClassifier(
+                n_estimators=100,
+                max_depth=6,
+                random_state=seed,
+                n_jobs=-1
+            )
+            return clf
+        xgb_params = dict(model_config.get("params", {}))
         xgb_params.pop("verbose", None)
         if "eval_metric" not in xgb_params:
             xgb_params["eval_metric"] = "logloss"
+        if "tree_method" not in xgb_params:
+            xgb_params["tree_method"] = "hist"
         clf = xgb.XGBClassifier(**xgb_params)
         return clf
 
     if model_type == "mlp":
         _require_torch("make_model(model_type='mlp')")
-        input_dim = int(model_config["input_dim"])
-        hidden_dim = int(model_config["hidden_dim"])
-        dropout_rate = float(model_config.get("dropout_rate", 0.5))
-        return MLP(input_dim, hidden_dim, dropout_rate=dropout_rate)
+        params = dict(model_config.get("params", {}))
+        input_dim = int(params.get("input_dim", model_config.get("input_dim")))
+        hidden_dim = int(params.get("hidden_dim", model_config.get("hidden_dim", 64)))
+        hidden_dims = [int(v) for v in params.get("hidden_dims", [hidden_dim])]
+        dropout_rate = float(params.get("dropout_rate", model_config.get("dropout_rate", 0.5)))
+        return MLP(
+            input_dim,
+            hidden_dim,
+            dropout_rate=dropout_rate,
+            hidden_dims=hidden_dims,
+        )
 
     raise ValueError(f"Unknown model_type: {model_type}")
 
@@ -767,7 +939,7 @@ def make_model(candidate: Dict[str, Any], seed: int) -> Any:
 # ✅ 改后：统一处理所有 PyTorch 模型
 def predict_dpoint(model: Any, X: pd.DataFrame) -> pd.Series:
     # 所有 PyTorch 模型统一走这里
-    if isinstance(model, (MLP, LSTM, GRU, CNN1D, Transformer)):
+    if is_torch_model_instance(model):
         device = _get_device()
         # MLP 序列长度为 1，序列模型从训练时保存的属性读取，找不到则默认 20
         if isinstance(model, MLP):
