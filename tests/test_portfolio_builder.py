@@ -152,6 +152,55 @@ class TestBuildPortfolio:
 
         assert sum(portfolio.weights) <= 0.9 + 0.001
         assert portfolio.cash >= 0.1 - 0.001
+    
+    def test_portfolio_respects_max_weight_under_score_weighting(self):
+        """测试score-weighting下遵守max_weight约束"""
+        df = pd.DataFrame({
+            "date": pd.to_datetime(["2024-01-01"] * 5),
+            "ticker": ["A", "B", "C", "D", "E"],
+            "score": [0.9, 0.8, 0.7, 0.6, 0.5],
+        })
+        
+        config = PortfolioConfig(
+            top_k=5,
+            weighting="score",
+            max_weight=0.3,  # 限制单个股票最大权重
+            cash_buffer=0.1,
+        )
+        
+        portfolio = build_portfolio(
+            df,
+            date=pd.to_datetime("2024-01-01"),
+            config=config,
+        )
+        
+        # 检查所有权重都不超过max_weight
+        for weight in portfolio.weights:
+            assert weight <= config.max_weight + 0.001, (
+                f"Weight {weight} exceeds max_weight {config.max_weight}"
+            )
+        
+        # 检查总权重+现金=1
+        total = sum(portfolio.weights) + portfolio.cash
+        assert abs(total - 1.0) < 0.001
+    
+    def test_portfolio_empty_when_scores_empty(self):
+        """测试scores为空时组合不会崩溃"""
+        # 空DataFrame
+        df_empty = pd.DataFrame(columns=["date", "ticker", "score"])
+        
+        config = PortfolioConfig(top_k=5, weighting="equal")
+        
+        # 不应该抛出异常
+        portfolio = build_portfolio(
+            df_empty,
+            date=pd.to_datetime("2024-01-01"),
+            config=config,
+        )
+        
+        assert portfolio.n_holdings == 0
+        assert len(portfolio.tickers) == 0
+        assert len(portfolio.weights) == 0
 
 
 if __name__ == "__main__":

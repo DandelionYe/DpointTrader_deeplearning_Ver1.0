@@ -7,17 +7,22 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from models import (
+    clear_torch_cuda_cache,
     get_torch_runtime_info,
     is_torch_model_instance,
     is_torch_model_type,
     make_model,
-    predict_dpoint,
+    predict_pytorch_model_sequence,
+    predict_pytorch_model_tabular,
     resolve_torch_device,
     train_pytorch_model,
 )
 from ranking_metrics import RankingMetrics, compute_all_ranking_metrics
+from sequence_builder import PanelSequenceStore, SequenceDatasetBundle, build_panel_sequence_store, build_panel_sequences
 
 logger = logging.getLogger(__name__)
+
+SEQUENCE_MODEL_TYPES = {"lstm", "gru", "cnn", "transformer"}
 
 
 @dataclass
@@ -27,8 +32,11 @@ class PanelTrainResult:
     oof_scores: Optional[pd.DataFrame] = None
     train_metrics: Dict[str, float] = field(default_factory=dict)
     val_metrics: Dict[str, float] = field(default_factory=dict)
+    holdout_metrics: Dict[str, float] = field(default_factory=dict)
     config: Dict[str, Any] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
+    split_mode: str = "wf"
+    evaluation_split: str = "oof"
 
 
 @dataclass
@@ -36,6 +44,93 @@ class ScoreResult:
     scores_df: pd.DataFrame
     label: Optional[pd.Series] = None
     split: str = "test"
+
+
+def _feature_cols(X: pd.DataFrame, date_col: str, ticker_col: str) -> List[str]:
+    return [c for c in X.columns if c not in [date_col, ticker_col]]
+
+
+def _is_sequence_model(config: Dict[str, Any]) -> bool:
+    return str(config.get("model_type", "xgb")).lower() in SEQUENCE_MODEL_TYPES
+
+
+def _build_sequence_bundle(
+    X: pd.DataFrame,
+    y: Optional[pd.Series],
+    *,
+    config: Dict[str, Any],
+    date_col: str,
+    ticker_col: str,
+) -> SequenceDatasetBundle:
+    model_params = dict(config.get("model_params", {}))
+    seq_len = int(model_params.get("seq_len", 20))
+    return build_panel_sequences(
+        X,
+        y,
+        date_col=date_col,
+        ticker_col=ticker_col,
+        seq_len=seq_len,
+    )
+
+
+def _build_sequence_store(
+    X: pd.DataFrame,
+    y: Optional[pd.Series],
+    *,
+    config: Dict[str, Any],
+    date_col: str,
+    ticker_col: str,
+) -> PanelSequenceStore:
+    model_params = dict(config.get("model_params", {}))
+    seq_len = int(model_params.get("seq_len", 20))
+    return build_panel_sequence_store(
+        X,
+        y,
+        date_col=date_col,
+        ticker_col=ticker_col,
+        seq_len=seq_len,
+    )
+
+
+def align_scores_with_labels(
+    scores_df: pd.DataFrame,
+    X: pd.DataFrame,
+    y: pd.Series,
+    *,
+    config: Dict[str, Any],
+    date_col: str = "date",
+    ticker_col: str = "ticker",
+    sequence_store: Optional[PanelSequenceStore] = None,
+) -> pd.DataFrame:
+    result = scores_df.copy().reset_index(drop=True)
+    if _is_sequence_model(config):
+        store = sequence_store or _build_sequence_store(
+            X,
+            y,
+            config=config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+        )
+        if len(result) != len(store.meta_df):
+            raise ValueError(
+                f"Sequence prediction rows ({len(result)}) do not match sequence labels ({len(store.meta_df)})"
+            )
+        if store.label_by_ticker is None:
+            raise ValueError("Sequence store is missing labels")
+        labels = [
+            float(store.label_by_ticker[ticker][start + store.seq_len - 1])
+            for ticker, start in store.window_keys
+        ]
+        result["label"] = labels
+        result["source_index"] = store.meta_df["source_index"].to_numpy()
+        return result
+
+    labels = y.loc[X.index].to_numpy()
+    if len(result) != len(labels):
+        raise ValueError(f"Prediction rows ({len(result)}) do not match labels ({len(labels)})")
+    result["label"] = labels
+    result["source_index"] = X.index.to_numpy()
+    return result
 
 
 def train_panel_model(
@@ -47,36 +142,83 @@ def train_panel_model(
     ticker_col: str = "ticker",
     seed: int = 42,
 ) -> Tuple[Any, Dict[str, Any]]:
-    feature_cols = [c for c in X.columns if c not in [date_col, ticker_col]]
-    X_train_df = X[feature_cols].copy()
-
+    feature_cols = _feature_cols(X, date_col, ticker_col)
     model_type = str(config.get("model_type", "xgb")).lower()
     model_params = dict(config.get("model_params", {}))
+    is_sequence = model_type in SEQUENCE_MODEL_TYPES
 
-    if is_torch_model_type(model_type):
+    if is_sequence:
+        store = _build_sequence_store(
+            X,
+            y,
+            config=config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+        )
         runtime = get_torch_runtime_info()
         device = resolve_torch_device(str(config.get("device", "auto")))
         logger.info(
-            "Training torch model type=%s on device=%s (torch=%s, cuda_available=%s)",
+            "Sequence training setup: model_type=%s device=%s rows=%d sequences=%d seq_len=%d n_features=%d batch_size=%d hidden_dim=%s auto_batch_tune=%s train_target_vram=%.0f%% predict_target_vram=%.0f%% amp=%s tf32=%s",
+            model_type,
+            device,
+            len(X),
+            len(store.window_keys),
+            store.seq_len,
+            len(store.feature_names),
+            int(model_params.get("batch_size", 64)),
+            model_params.get("hidden_dim", model_params.get("d_model", "n/a")),
+            bool(model_params.get("auto_batch_tune", True)),
+            float(model_params.get("train_target_vram_util", model_params.get("target_vram_util", 0.88))) * 100.0,
+            float(model_params.get("predict_target_vram_util", model_params.get("target_vram_util", 0.88))) * 100.0,
+            bool(model_params.get("use_amp", False)),
+            bool(model_params.get("use_tf32", False)),
+        )
+        logger.info(
+            "Training sequence model type=%s on device=%s (torch=%s cuda_available=%s)",
             model_type,
             device,
             runtime.get("torch_version"),
             runtime.get("cuda_available"),
         )
         torch_config = {"model_type": model_type, **model_params}
-        model = train_pytorch_model(
-            X_train_df,
-            y,
-            torch_config,
-            device=device,
+        model = train_pytorch_model(store, None, torch_config, device=device)
+        model._seq_len = store.seq_len
+        model._feature_names = list(store.feature_names)
+        model._is_panel_sequence_model = True
+        setattr(model, "_device_preference", str(config.get("device", "auto")))
+        model_info = {
+            "model_type": model_type,
+            "feature_names": list(store.feature_names),
+            "n_features": len(store.feature_names),
+            "n_samples": len(store.window_keys),
+            "n_tickers": X[ticker_col].nunique(),
+            "device": str(config.get("device", "auto")),
+            "is_sequence": True,
+            "seq_len": store.seq_len,
+            "batch_size": int(getattr(model, "_trained_batch_size", model_params.get("batch_size", 64))),
+        }
+        return model, model_info
+
+    X_train_df = X[feature_cols].copy()
+    if is_torch_model_type(model_type):
+        runtime = get_torch_runtime_info()
+        device = resolve_torch_device(str(config.get("device", "auto")))
+        logger.info(
+            "Training torch model type=%s on device=%s (torch=%s cuda_available=%s)",
+            model_type,
+            device,
+            runtime.get("torch_version"),
+            runtime.get("cuda_available"),
         )
+        torch_config = {"model_type": model_type, **model_params}
+        model = train_pytorch_model(X_train_df, y, torch_config, device=device)
         setattr(model, "_device_preference", str(config.get("device", "auto")))
     else:
         candidate = {"model_config": {"model_type": model_type, "params": model_params}}
         model = make_model(candidate, seed=seed)
         if not hasattr(model, "fit"):
             raise ValueError(f"Model {model_type} does not have fit method")
-        model.fit(X_train_df.values, y.values)
+        model.fit(X_train_df.to_numpy(), y.to_numpy())
 
     model_info = {
         "model_type": model_type,
@@ -85,6 +227,7 @@ def train_panel_model(
         "n_samples": len(X),
         "n_tickers": X[ticker_col].nunique(),
         "device": str(config.get("device", "auto")),
+        "is_sequence": False,
     }
     return model, model_info
 
@@ -96,29 +239,60 @@ def predict_panel(
     date_col: str = "date",
     ticker_col: str = "ticker",
     return_proba: bool = True,
+    sequence_store: Optional[PanelSequenceStore] = None,
 ) -> pd.DataFrame:
     del return_proba
+    feature_cols = _feature_cols(X, date_col, ticker_col)
+    is_sequence = getattr(model, "_is_panel_sequence_model", False)
 
-    feature_cols = [c for c in X.columns if c not in [date_col, ticker_col]]
-    X_eval = X[feature_cols].values
+    if is_sequence:
+        seq_len = int(getattr(model, "_seq_len", 20))
+        device = resolve_torch_device(str(getattr(model, "_device_preference", "auto")))
+        store = sequence_store or build_panel_sequence_store(
+            X,
+            None,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            seq_len=seq_len,
+        )
+        logger.info(
+            "Predicting sequence model on device=%s with sequences=%d seq_len=%d train_batch_size=%d predict_batch_size=%d",
+            device,
+            len(store.window_keys),
+            store.seq_len,
+            int(getattr(model, "_trained_batch_size", 64)),
+            int(getattr(model, "_predict_batch_size", getattr(model, "_trained_batch_size", 64))),
+        )
+        scores = predict_pytorch_model_sequence(model, store, store.meta_df, device)
+        return pd.DataFrame(
+            {
+                date_col: store.meta_df["date"].to_numpy(),
+                ticker_col: store.meta_df["ticker"].to_numpy(),
+                "score": scores.to_numpy(),
+                "proba": scores.to_numpy(),
+            }
+        )
 
+    X_eval = X[feature_cols]
     if is_torch_model_instance(model):
-        score = predict_dpoint(model, X[feature_cols])
+        device = resolve_torch_device(str(getattr(model, "_device_preference", "auto")))
+        score = predict_pytorch_model_tabular(model, X_eval, device)
         proba = score
     else:
+        X_values = X_eval.to_numpy()
         if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(X_eval)[:, 1]
+            proba = pd.Series(model.predict_proba(X_values)[:, 1], index=X.index)
             score = proba
         else:
-            score = model.predict(X_eval)
+            score = pd.Series(model.predict(X_values), index=X.index)
             proba = score
 
     return pd.DataFrame(
         {
-            date_col: X[date_col].values,
-            ticker_col: X[ticker_col].values,
-            "score": score,
-            "proba": proba,
+            date_col: X[date_col].to_numpy(),
+            ticker_col: X[ticker_col].to_numpy(),
+            "score": score.to_numpy(),
+            "proba": proba.to_numpy(),
         }
     )
 
@@ -133,16 +307,12 @@ def compute_oof_scores(
     ticker_col: str = "ticker",
     seed: int = 42,
 ) -> pd.DataFrame:
-    oof_rows = []
-
+    oof_parts: List[pd.DataFrame] = []
     for fold_idx, (train_idx, val_idx) in enumerate(splits):
-        logger.info(f"Training fold {fold_idx + 1}/{len(splits)}")
-
-        X_train = X.iloc[train_idx]
-        y_train = y.iloc[train_idx]
-        X_val = X.iloc[val_idx]
-        y_val = y.iloc[val_idx]
-
+        X_train = X.loc[train_idx]
+        y_train = y.loc[train_idx]
+        X_val = X.loc[val_idx]
+        y_val = y.loc[val_idx]
         model, _ = train_panel_model(
             X_train,
             y_train,
@@ -151,21 +321,35 @@ def compute_oof_scores(
             ticker_col=ticker_col,
             seed=seed + fold_idx,
         )
-
+        val_store = _build_sequence_store(
+            X_val,
+            y_val if _is_sequence_model(config) else None,
+            config=config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+        ) if _is_sequence_model(config) else None
         val_pred = predict_panel(
             model,
             X_val,
             date_col=date_col,
             ticker_col=ticker_col,
+            sequence_store=val_store,
         )
-        val_pred["fold"] = fold_idx
-        val_pred["is_oof"] = True
-        val_pred["label"] = y_val.values
-
-        for _, row in val_pred.iterrows():
-            oof_rows.append(row.to_dict())
-
-    return pd.DataFrame(oof_rows)
+        val_scores = align_scores_with_labels(
+            val_pred,
+            X_val,
+            y_val,
+            config=config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            sequence_store=val_store,
+        )
+        val_scores["fold"] = fold_idx
+        val_scores["is_oof"] = True
+        oof_parts.append(val_scores)
+        if _is_sequence_model(config):
+            clear_torch_cuda_cache()
+    return pd.concat(oof_parts, ignore_index=True) if oof_parts else pd.DataFrame()
 
 
 def evaluate_panel_model(
@@ -185,6 +369,36 @@ def evaluate_panel_model(
     )
 
 
+def evaluate_scores_df(
+    scores_df: pd.DataFrame,
+    *,
+    date_col: str = "date",
+    ticker_col: str = "ticker",
+    score_col: str = "score",
+    label_col: str = "label",
+) -> Dict[str, float]:
+    if scores_df.empty:
+        return {
+            "rank_ic_mean": 0.0,
+            "rank_ic_std": 0.0,
+            "ic_mean": 0.0,
+            "topk_return_mean": 0.0,
+        }
+    metrics = compute_all_ranking_metrics(
+        scores_df,
+        score_col=score_col,
+        label_col=label_col,
+        date_col=date_col,
+        ticker_col=ticker_col,
+    )
+    return {
+        "rank_ic_mean": float(metrics.rank_ic_mean),
+        "rank_ic_std": float(metrics.rank_ic_std),
+        "ic_mean": float(metrics.ic_mean),
+        "topk_return_mean": float(metrics.topk_return_mean),
+    }
+
+
 def train_with_walkforward(
     X: pd.DataFrame,
     y: pd.Series,
@@ -200,14 +414,13 @@ def train_with_walkforward(
     all_val_scores: List[pd.DataFrame] = []
 
     for fold_idx, (train_idx, val_idx) in enumerate(splits):
-        logger.info(f"Training fold {fold_idx + 1}/{len(splits)}")
-
+        logger.info("Training fold %d/%d", fold_idx + 1, len(splits))
         X_train = X.loc[train_idx]
         y_train = y.loc[train_idx]
         X_val = X.loc[val_idx]
         y_val = y.loc[val_idx]
 
-        model, model_info = train_panel_model(
+        model, _ = train_panel_model(
             X_train,
             y_train,
             config,
@@ -216,46 +429,42 @@ def train_with_walkforward(
             seed=seed + fold_idx,
         )
 
-        train_pred = predict_panel(
-            model,
-            X_train,
+        val_store = _build_sequence_store(
+            X_val,
+            y_val if _is_sequence_model(config) else None,
+            config=config,
             date_col=date_col,
             ticker_col=ticker_col,
-        )
-        train_pred["label"] = y_train.values
-
+        ) if _is_sequence_model(config) else None
         val_pred = predict_panel(
             model,
             X_val,
             date_col=date_col,
             ticker_col=ticker_col,
+            sequence_store=val_store,
         )
-        val_pred["label"] = y_val.values
-
-        train_metrics = evaluate_panel_model(
-            train_pred,
-            score_col="score",
-            label_col="label",
-            date_col=date_col,
-            ticker_col=ticker_col,
-        )
-        val_metrics = evaluate_panel_model(
+        val_scores = align_scores_with_labels(
             val_pred,
-            score_col="score",
-            label_col="label",
+            X_val,
+            y_val,
+            config=config,
             date_col=date_col,
             ticker_col=ticker_col,
+            sequence_store=val_store,
         )
 
-        all_val_scores.append(val_pred)
+        val_metrics = evaluate_scores_df(val_scores, date_col=date_col, ticker_col=ticker_col)
+        val_scores["fold"] = fold_idx
+        val_scores["is_oof"] = True
+        all_val_scores.append(val_scores)
         notes.append(
-            f"Fold {fold_idx + 1}: "
-            f"train_rank_ic={train_metrics.rank_ic_mean:.4f}, "
-            f"val_rank_ic={val_metrics.rank_ic_mean:.4f}"
+            f"Fold {fold_idx + 1}: val_rank_ic={val_metrics['rank_ic_mean']:.4f}, "
+            f"val_topk_return={val_metrics['topk_return_mean']:.4f}"
         )
+        if _is_sequence_model(config):
+            clear_torch_cuda_cache()
 
-    oof_df = pd.concat(all_val_scores, ignore_index=True) if compute_oof else None
-
+    oof_df = pd.concat(all_val_scores, ignore_index=True) if compute_oof and all_val_scores else pd.DataFrame()
     final_model, final_info = train_panel_model(
         X,
         y,
@@ -264,43 +473,154 @@ def train_with_walkforward(
         ticker_col=ticker_col,
         seed=seed,
     )
-
-    all_val_combined = pd.concat(all_val_scores, ignore_index=True)
-    final_val_metrics = evaluate_panel_model(
-        all_val_combined,
-        score_col="score",
-        label_col="label",
-        date_col=date_col,
-        ticker_col=ticker_col,
-    )
+    oof_metrics = evaluate_scores_df(oof_df, date_col=date_col, ticker_col=ticker_col)
 
     return PanelTrainResult(
         model=final_model,
         feature_names=final_info["feature_names"],
         oof_scores=oof_df,
-        train_metrics={
-            "rank_ic_mean": final_val_metrics.rank_ic_mean,
-            "rank_ic_std": final_val_metrics.rank_ic_std,
-            "ic_mean": final_val_metrics.ic_mean,
-            "topk_return_mean": final_val_metrics.topk_return_mean,
-        },
-        val_metrics={
-            "rank_ic_mean": final_val_metrics.rank_ic_mean,
-            "rank_ic_std": final_val_metrics.rank_ic_std,
-            "ic_mean": final_val_metrics.ic_mean,
-            "topk_return_mean": final_val_metrics.topk_return_mean,
-        },
+        train_metrics={},
+        val_metrics=oof_metrics,
         config=config,
         notes=notes,
+        split_mode="wf",
+        evaluation_split="oof",
+    )
+
+
+def train_with_nested_walkforward(
+    X: pd.DataFrame,
+    y: pd.Series,
+    config: Dict[str, Any],
+    nested_splits: List[Dict[str, Any]],
+    *,
+    date_col: str = "date",
+    ticker_col: str = "ticker",
+    seed: int = 42,
+) -> PanelTrainResult:
+    notes: List[str] = []
+    outer_scores: List[pd.DataFrame] = []
+
+    for outer_fold_idx, outer_split in enumerate(nested_splits):
+        logger.info("Outer fold %d/%d", outer_fold_idx + 1, len(nested_splits))
+        X_outer_train = X.loc[outer_split["outer_train_idx"]]
+        y_outer_train = y.loc[outer_split["outer_train_idx"]]
+        X_outer_val = X.loc[outer_split["outer_val_idx"]]
+        y_outer_val = y.loc[outer_split["outer_val_idx"]]
+
+        best_inner_metric = float("-inf")
+        for inner_idx, (inner_train_idx, inner_val_idx) in enumerate(outer_split["inner_splits"]):
+            inner_model, _ = train_panel_model(
+                X.loc[inner_train_idx],
+                y.loc[inner_train_idx],
+                config,
+                date_col=date_col,
+                ticker_col=ticker_col,
+                seed=seed + outer_fold_idx * 100 + inner_idx,
+            )
+            X_inner_val = X.loc[inner_val_idx]
+            y_inner_val = y.loc[inner_val_idx]
+            inner_store = _build_sequence_store(
+                X_inner_val,
+                y_inner_val if _is_sequence_model(config) else None,
+                config=config,
+                date_col=date_col,
+                ticker_col=ticker_col,
+            ) if _is_sequence_model(config) else None
+            inner_pred = predict_panel(
+                inner_model,
+                X_inner_val,
+                date_col=date_col,
+                ticker_col=ticker_col,
+                sequence_store=inner_store,
+            )
+            inner_scores = align_scores_with_labels(
+                inner_pred,
+                X_inner_val,
+                y_inner_val,
+                config=config,
+                date_col=date_col,
+                ticker_col=ticker_col,
+                sequence_store=inner_store,
+            )
+            inner_metrics = evaluate_scores_df(inner_scores, date_col=date_col, ticker_col=ticker_col)
+            best_inner_metric = max(best_inner_metric, inner_metrics["rank_ic_mean"])
+
+        outer_model, _ = train_panel_model(
+            X_outer_train,
+            y_outer_train,
+            config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            seed=seed + outer_fold_idx,
+        )
+        outer_store = _build_sequence_store(
+            X_outer_val,
+            y_outer_val if _is_sequence_model(config) else None,
+            config=config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+        ) if _is_sequence_model(config) else None
+        outer_pred = predict_panel(
+            outer_model,
+            X_outer_val,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            sequence_store=outer_store,
+        )
+        outer_scores_df = align_scores_with_labels(
+            outer_pred,
+            X_outer_val,
+            y_outer_val,
+            config=config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            sequence_store=outer_store,
+        )
+        outer_scores_df["outer_fold"] = outer_fold_idx
+        outer_scores_df["is_oof"] = True
+        outer_scores.append(outer_scores_df)
+        outer_metrics = evaluate_scores_df(outer_scores_df, date_col=date_col, ticker_col=ticker_col)
+        notes.append(
+            f"Outer fold {outer_fold_idx + 1}: inner_best_rank_ic={best_inner_metric:.4f}, "
+            f"outer_rank_ic={outer_metrics['rank_ic_mean']:.4f}"
+        )
+        if _is_sequence_model(config):
+            clear_torch_cuda_cache()
+
+    oof_df = pd.concat(outer_scores, ignore_index=True) if outer_scores else pd.DataFrame()
+    final_model, final_info = train_panel_model(
+        X,
+        y,
+        config,
+        date_col=date_col,
+        ticker_col=ticker_col,
+        seed=seed,
+    )
+    oof_metrics = evaluate_scores_df(oof_df, date_col=date_col, ticker_col=ticker_col)
+
+    return PanelTrainResult(
+        model=final_model,
+        feature_names=final_info["feature_names"],
+        oof_scores=oof_df,
+        train_metrics={},
+        val_metrics=oof_metrics,
+        config=config,
+        notes=notes,
+        split_mode="nested_wf",
+        evaluation_split="oof",
     )
 
 
 __all__ = [
     "PanelTrainResult",
     "ScoreResult",
+    "align_scores_with_labels",
     "train_panel_model",
     "predict_panel",
     "compute_oof_scores",
     "evaluate_panel_model",
     "train_with_walkforward",
+    "evaluate_scores_df",
+    "train_with_nested_walkforward",
 ]

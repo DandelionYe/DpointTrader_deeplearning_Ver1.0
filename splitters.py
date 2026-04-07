@@ -170,6 +170,16 @@ def walkforward_splits_by_date(
             "Total dates=%d, train_start_ratio=%.2f, min_rows=%d",
             n_folds, n_dates, train_start_ratio, min_rows
         )
+    else:
+        logger.info(
+            "walkforward_splits_by_date: %d folds generated from %d dates",
+            len(splits), n_dates
+        )
+        for k, (train_dates, val_dates) in enumerate(splits):
+            logger.info(
+                "  Fold %d: train=%d dates, val=%d dates",
+                k + 1, len(train_dates), len(val_dates)
+            )
 
     return splits
 
@@ -253,6 +263,16 @@ def walkforward_splits_with_embargo(
             "walkforward_splits_with_embargo: ALL %d folds skipped",
             n_folds
         )
+    else:
+        logger.info(
+            "walkforward_splits_with_embargo: %d folds generated from %d dates (embargo=%d)",
+            len(splits), n_dates, embargo_days
+        )
+        for k, (train_dates, val_dates) in enumerate(splits):
+            logger.info(
+                "  Fold %d: train=%d dates, val=%d dates",
+                k + 1, len(train_dates), len(val_dates)
+            )
 
     return splits
 
@@ -351,6 +371,16 @@ def nested_walkforward_splits_by_date(
 
     if not splits:
         logger.warning("nested_walkforward: ALL %d folds skipped", n_outer_folds)
+    else:
+        logger.info(
+            "nested_walkforward: %d outer folds generated from %d dates",
+            len(splits), n_dates
+        )
+        for k, (outer_train_dates, outer_val_dates, inner_splits) in enumerate(splits):
+            logger.info(
+                "  Outer Fold %d: outer_train=%d dates, outer_val=%d dates, inner_splits=%d",
+                k + 1, len(outer_train_dates), len(outer_val_dates), len(inner_splits)
+            )
 
     return splits
 
@@ -359,8 +389,10 @@ def final_holdout_split_by_date(
     panel_df: pd.DataFrame,
     *,
     date_col: str = "date",
+    ticker_col: str = "ticker",
     holdout_ratio: float = 0.15,
     min_holdout_rows: int = 60,
+    enforce_non_empty_search: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     从数据末尾切出 holdout 集（日期版本）。
@@ -373,8 +405,10 @@ def final_holdout_split_by_date(
     Args:
         panel_df: panel DataFrame
         date_col: 日期列名
+        ticker_col: ticker列名
         holdout_ratio: holdout 集比例
         min_holdout_rows: holdout 集最小行数
+        enforce_non_empty_search: 是否强制search集非空
 
     Returns:
         Tuple[search_df, holdout_df]
@@ -384,7 +418,7 @@ def final_holdout_split_by_date(
     """
     unique_dates = sorted(panel_df[date_col].unique())
     n_dates = len(unique_dates)
-    n_tickers = panel_df[ticker_col].nunique() if "ticker" in panel_df.columns else 1
+    n_tickers = panel_df[ticker_col].nunique() if ticker_col in panel_df.columns else 1
 
     holdout_size = int(n_dates * holdout_ratio)
     holdout_rows = holdout_size * n_tickers
@@ -399,11 +433,17 @@ def final_holdout_split_by_date(
     holdout_dates = unique_dates[holdout_start_idx:]
     search_dates = unique_dates[:holdout_start_idx]
 
+    if enforce_non_empty_search and len(search_dates) == 0:
+        raise ValueError(
+            "Search set is empty after holdout split. "
+            "Reduce holdout_ratio or use more data."
+        )
+
     search_df = panel_df[panel_df[date_col].isin(search_dates)].copy()
     holdout_df = panel_df[panel_df[date_col].isin(holdout_dates)].copy()
 
     logger.info(
-        "P0 Final Holdout Split: search=%d rows (%d dates), "
+        "Final Holdout Split: search=%d rows (%d dates), "
         "holdout=%d rows (%d dates, %.1f%%)",
         len(search_df), len(search_dates),
         len(holdout_df), len(holdout_dates), holdout_ratio * 100
@@ -491,6 +531,78 @@ def filter_panel_by_dates(
     return train_df, val_df
 
 
+def build_date_splits(
+    panel_df: pd.DataFrame,
+    *,
+    split_mode: str,
+    date_col: str = "date",
+    ticker_col: str = "ticker",
+    n_folds: int = 4,
+    n_outer_folds: int = 3,
+    n_inner_folds: int = 2,
+    train_start_ratio: float = 0.5,
+    min_rows: int = 60,
+    embargo_days: int = 5,
+) -> List:
+    """
+    统一的日期切分包装函数。
+    
+    根据split_mode选择不同的切分策略。
+    
+    Args:
+        panel_df: panel DataFrame
+        split_mode: 切分模式 ("wf", "wf_embargo", "nested_wf")
+        date_col: 日期列名
+        ticker_col: ticker列名
+        n_folds: 折数（用于wf/wf_embargo）
+        n_outer_folds: 外层折数（用于nested_wf）
+        n_inner_folds: 内层折数（用于nested_wf）
+        train_start_ratio: 初始训练集比例
+        min_rows: 最小行数约束
+        embargo_days: embargo天数（用于wf_embargo）
+    
+    Returns:
+        List: 切分结果
+            - wf/wf_embargo: List[Tuple[List[Timestamp], List[Timestamp]]]
+            - nested_wf: List[Tuple[List[Timestamp], List[Timestamp], List[Tuple[...]]]]
+    
+    Raises:
+        ValueError: 如果split_mode无效
+    """
+    if split_mode == "wf":
+        return walkforward_splits_by_date(
+            panel_df,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            n_folds=n_folds,
+            train_start_ratio=train_start_ratio,
+            min_rows=min_rows,
+        )
+    elif split_mode == "wf_embargo":
+        return walkforward_splits_with_embargo(
+            panel_df,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            n_folds=n_folds,
+            train_start_ratio=train_start_ratio,
+            min_rows=min_rows,
+            embargo_days=embargo_days,
+        )
+    elif split_mode == "nested_wf":
+        return nested_walkforward_splits_by_date(
+            panel_df,
+            date_col=date_col,
+            ticker_col=ticker_col,
+            n_outer_folds=n_outer_folds,
+            n_inner_folds=n_inner_folds,
+            train_start_ratio=train_start_ratio,
+            min_rows=min_rows,
+            embargo_days=embargo_days,
+        )
+    else:
+        raise ValueError(f"Invalid split_mode: {split_mode}. Must be one of ['wf', 'wf_embargo', 'nested_wf']")
+
+
 # =========================================================
 # 公开 API 导出
 # =========================================================
@@ -503,4 +615,5 @@ __all__ = [
     "final_holdout_split_by_date",
     "recommend_n_folds",
     "filter_panel_by_dates",
+    "build_date_splits",
 ]

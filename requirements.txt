@@ -1,9 +1,13 @@
-pandas==2.3.3
-numpy==2.4.0
-scikit-learn==1.6.1
-joblib==1.5.2
-openpyxl==3.1.5
-xlsxwriter==3.2.9
-torch==2.10.0
-xgboost==3.1.2
-tabulate==0.9.0
+# Runtime dependencies
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.6
+joblib>=1.5
+openpyxl>=3.1
+XlsxWriter>=3.2
+torch>=2.5
+xgboost>=3.0
+tabulate>=0.9
+
+# Test dependencies
+pytest>=8.4
