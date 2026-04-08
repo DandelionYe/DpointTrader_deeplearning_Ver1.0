@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import pandas as pd
 
@@ -202,6 +202,7 @@ def nested_walkforward_splits_by_date(
     min_rows: int = 60,
     embargo_days: int = 5,
     inner_use_embargo: bool = True,
+    inner_embargo_days: Optional[int] = None,
 ) -> List[Tuple[List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]]]:
     unique_dates = _unique_dates(panel_df, date_col)
     n_dates = len(unique_dates)
@@ -211,6 +212,7 @@ def nested_walkforward_splits_by_date(
     ]
 
     splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]]] = []
+    effective_inner_embargo = embargo_days if inner_embargo_days is None else int(inner_embargo_days)
     for fold_idx in range(len(cuts) - 1):
         outer_train_end_idx = int(n_dates * cuts[fold_idx])
         outer_val_end_idx = int(n_dates * cuts[fold_idx + 1])
@@ -246,7 +248,7 @@ def nested_walkforward_splits_by_date(
                 n_folds=n_inner_folds,
                 train_start_ratio=train_start_ratio,
                 min_rows=min_rows,
-                embargo_days=embargo_days,
+                embargo_days=effective_inner_embargo,
             )
         else:
             inner_splits = walkforward_splits_by_date(
@@ -271,7 +273,7 @@ def nested_walkforward_splits_by_date(
         len(splits),
         n_dates,
         embargo_days,
-        "on" if inner_use_embargo else "off",
+        effective_inner_embargo if inner_use_embargo else "off",
     )
     for idx, (outer_train_dates, outer_val_dates, inner_splits) in enumerate(splits, start=1):
         logger.info(
@@ -380,6 +382,7 @@ def build_date_splits(
     train_start_ratio: float = 0.5,
     min_rows: int = 60,
     embargo_days: int = 5,
+    inner_embargo_days: Optional[int] = None,
 ) -> List:
     if split_mode == "wf":
         return walkforward_splits_by_date(
@@ -411,6 +414,7 @@ def build_date_splits(
             min_rows=min_rows,
             embargo_days=embargo_days,
             inner_use_embargo=True,
+            inner_embargo_days=inner_embargo_days,
         )
     raise ValueError(f"Invalid split_mode: {split_mode}. Must be one of ['wf', 'wf_embargo', 'nested_wf']")
 

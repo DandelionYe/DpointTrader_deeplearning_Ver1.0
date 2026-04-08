@@ -49,6 +49,8 @@ def prepare_scores_for_backtest(
     date_col: str = "date",
     trade_date_col: str = "trade_date",
     signal_date_col: str = "signal_date",
+    execution_lag_days: int = 1,
+    drop_untradable_signals: bool = True,
 ) -> pd.DataFrame:
     if scores_df.empty:
         prepared = scores_df.copy()
@@ -67,20 +69,40 @@ def prepare_scores_for_backtest(
 
     if trade_date_col in prepared.columns:
         prepared[trade_date_col] = pd.to_datetime(prepared[trade_date_col])
-        return prepared[prepared[trade_date_col].notna()].copy()
+        if drop_untradable_signals:
+            return prepared[prepared[trade_date_col].notna()].copy()
+        return prepared.copy()
 
     trading_dates = pd.Index(sorted(pd.to_datetime(panel_df[date_col].unique())))
     if trading_dates.empty:
         prepared[trade_date_col] = pd.NaT
-        return prepared.iloc[0:0].copy()
+        if drop_untradable_signals:
+            return prepared.iloc[0:0].copy()
+        return prepared
 
     signal_dates = pd.DatetimeIndex(prepared[date_col])
-    next_positions = trading_dates.searchsorted(signal_dates, side="right")
+    lag = max(1, int(execution_lag_days))
+    next_positions = trading_dates.searchsorted(signal_dates, side="right") + (lag - 1)
     prepared[trade_date_col] = [
         trading_dates[pos] if pos < len(trading_dates) else pd.NaT
         for pos in next_positions
     ]
-    return prepared[prepared[trade_date_col].notna()].copy()
+    if drop_untradable_signals:
+        return prepared[prepared[trade_date_col].notna()].copy()
+    return prepared
+
+
+def _current_execution_prices_no_carry(
+    day_prices: pd.DataFrame,
+    *,
+    ticker_col: str,
+    price_col: str,
+) -> Dict[str, float]:
+    if day_prices.empty:
+        return {}
+    px = day_prices[[ticker_col, price_col]].dropna()
+    px = px[px[price_col] > 0]
+    return dict(zip(px[ticker_col], px[price_col]))
 
 
 def _is_rebalance_day(
@@ -100,6 +122,39 @@ def _is_rebalance_day(
     if rebalance_freq == "monthly":
         return (current_date.year, current_date.month) != (previous_date.year, previous_date.month)
     raise ValueError(f"Unsupported rebalance_freq: {rebalance_freq}")
+
+
+def _rebalance_bucket_key(date: pd.Timestamp, *, rebalance_freq: str) -> str:
+    if rebalance_freq == "daily":
+        return str(pd.Timestamp(date).date())
+    if rebalance_freq == "weekly":
+        iso = date.isocalendar()
+        return f"{iso.year}-W{int(iso.week):02d}"
+    if rebalance_freq == "monthly":
+        return f"{date.year}-{date.month:02d}"
+    raise ValueError(f"Unsupported rebalance_freq: {rebalance_freq}")
+
+
+def _build_rebalance_calendar(
+    dates: List[pd.Timestamp],
+    *,
+    rebalance_freq: str,
+    anchor: str = "first",
+) -> Dict[pd.Timestamp, str]:
+    dates = sorted(pd.to_datetime(dates))
+    if rebalance_freq == "daily":
+        return {pd.Timestamp(date): _rebalance_bucket_key(pd.Timestamp(date), rebalance_freq=rebalance_freq) for date in dates}
+
+    buckets: Dict[str, List[pd.Timestamp]] = {}
+    for date in dates:
+        bucket = _rebalance_bucket_key(pd.Timestamp(date), rebalance_freq=rebalance_freq)
+        buckets.setdefault(bucket, []).append(pd.Timestamp(date))
+
+    rebalance_calendar: Dict[pd.Timestamp, str] = {}
+    for bucket, bucket_dates in buckets.items():
+        chosen = bucket_dates[0] if anchor == "first" else bucket_dates[-1]
+        rebalance_calendar[pd.Timestamp(chosen)] = bucket
+    return rebalance_calendar
 
 
 @dataclass
@@ -187,7 +242,7 @@ def backtest_from_scores(
         ticker_col=ticker_col,
         close_col=price_cols["close"],
     )
-    previous_date: Optional[pd.Timestamp] = None
+    rebalance_calendar = _build_rebalance_calendar(dates, rebalance_freq=portfolio_config.rebalance_freq, anchor="first")
 
     for date in dates:
         day_prices = panel_df[panel_df[date_col] == date]
@@ -197,77 +252,76 @@ def backtest_from_scores(
             ticker_col=ticker_col,
             price_col=price_cols["close"],
         )
-        execution_prices = _current_prices_with_carry(
+        execution_prices = _current_execution_prices_no_carry(
             day_prices,
-            prev_closes,
             ticker_col=ticker_col,
             price_col=price_cols["open"],
         )
 
         day_scores = score_groups.get(pd.Timestamp(date), pd.DataFrame())
         should_rebalance = bool(
-            not day_scores.empty
-            and _is_rebalance_day(
-                pd.Timestamp(date),
-                previous_date,
-                rebalance_freq=portfolio_config.rebalance_freq,
-            )
+            pd.Timestamp(date) in rebalance_calendar and not day_scores.empty
         )
+        rebalance_bucket = rebalance_calendar.get(pd.Timestamp(date))
 
         if should_rebalance:
-            target_portfolio = build_portfolio(
-                day_scores,
-                date=pd.Timestamp(date),
-                config=portfolio_config,
-                score_col=score_col,
-                ticker_col=ticker_col,
-                date_col=trade_date_col,
-            )
-            total_equity = engine.cash + engine.position_book.total_market_value(close_prices)
-            if not current_holdings:
-                alloc_result = allocate_orders(
-                    target_portfolio,
-                    execution_prices,
-                    total_equity,
-                )
+            tradable_scores = day_scores[day_scores[ticker_col].isin(execution_prices.keys())].copy()
+            if tradable_scores.empty:
+                notes.append(f"{pd.Timestamp(date).date()}: rebalance day had no tradable scores at execution open.")
             else:
-                alloc_result = rebalance_orders(
-                    current_holdings,
-                    target_portfolio,
-                    execution_prices,
-                    total_equity,
+                target_portfolio = build_portfolio(
+                    tradable_scores,
+                    date=pd.Timestamp(date),
+                    config=portfolio_config,
+                    score_col=score_col,
+                    ticker_col=ticker_col,
+                    date_col=trade_date_col,
                 )
-
-            if alloc_result.orders:
-                fills = engine.execute_orders(
-                    alloc_result.orders,
-                    panel_df,
-                    prev_closes=prev_closes.copy() if prev_closes else None,
-                )
-                for order in alloc_result.orders:
-                    all_orders.append(
-                        {
-                            "date": order.date,
-                            "ticker": order.ticker,
-                            "action": order.action,
-                            "shares": order.shares,
-                            "target_weight": order.target_weight,
-                            "estimated_value": order.estimated_value,
-                        }
+                total_equity = engine.cash + engine.position_book.total_market_value(close_prices)
+                if not current_holdings:
+                    alloc_result = allocate_orders(
+                        target_portfolio,
+                        execution_prices,
+                        total_equity,
                     )
-                for fill in fills:
-                    if fill.status == "filled":
-                        all_fills.append(
+                else:
+                    alloc_result = rebalance_orders(
+                        current_holdings,
+                        target_portfolio,
+                        execution_prices,
+                        total_equity,
+                    )
+
+                if alloc_result.orders:
+                    fills = engine.execute_orders(
+                        alloc_result.orders,
+                        panel_df,
+                        prev_closes=prev_closes.copy() if prev_closes else None,
+                    )
+                    for order in alloc_result.orders:
+                        all_orders.append(
                             {
-                                "date": date,
-                                "ticker": fill.order.ticker,
-                                "action": fill.order.action,
-                                "filled_shares": fill.filled_shares,
-                                "fill_price": fill.fill_price,
-                                "commission": fill.commission,
-                                "slippage_cost": fill.slippage_cost,
+                                "date": order.date,
+                                "ticker": order.ticker,
+                                "action": order.action,
+                                "shares": order.shares,
+                                "target_weight": order.target_weight,
+                                "estimated_value": order.estimated_value,
                             }
                         )
+                    for fill in fills:
+                        if fill.status == "filled":
+                            all_fills.append(
+                                {
+                                    "date": date,
+                                    "ticker": fill.order.ticker,
+                                    "action": fill.order.action,
+                                    "filled_shares": fill.filled_shares,
+                                    "fill_price": fill.fill_price,
+                                    "commission": fill.commission,
+                                    "slippage_cost": fill.slippage_cost,
+                                }
+                            )
 
         current_holdings = {
             pos.ticker: pos.shares
@@ -283,6 +337,7 @@ def backtest_from_scores(
                 "market_value": engine.position_book.total_market_value(close_prices),
                 "n_holdings": len(current_holdings),
                 "is_rebalance_day": should_rebalance,
+                "rebalance_bucket": rebalance_bucket if should_rebalance else None,
             }
         )
 
@@ -298,7 +353,6 @@ def backtest_from_scores(
             )
 
         prev_closes = close_prices.copy()
-        previous_date = pd.Timestamp(date)
         engine.reset_daily()
 
     equity_curve = pd.DataFrame(equity_rows)
@@ -383,6 +437,7 @@ def compute_buy_and_hold_benchmark(
 
 __all__ = [
     "BacktestResult",
+    "_build_rebalance_calendar",
     "backtest_from_scores",
     "compute_buy_and_hold_benchmark",
     "prepare_scores_for_backtest",

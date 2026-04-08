@@ -141,6 +141,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--holdout_gap_days", type=int, default=0)
 
     parser.add_argument("--embargo_days", type=int, default=5)
+    parser.add_argument("--inner_embargo_days", type=int, default=None)
     parser.add_argument("--n_outer_folds", type=int, default=3)
     parser.add_argument("--n_inner_folds", type=int, default=2)
     parser.add_argument("--selection_metric", choices=["rank_ic_mean", "topk_return_mean"], default="rank_ic_mean")
@@ -376,6 +377,7 @@ def build_split_plan(
 ) -> Dict[str, Any]:
     use_holdout = args.use_holdout == 1
     if use_holdout:
+        effective_holdout_gap = max(int(getattr(args, "holdout_gap_days", 0)), int(getattr(args, "embargo_days", 0)))
         search_df, holdout_df = final_holdout_split_by_date(
             X,
             date_col=date_col,
@@ -383,7 +385,7 @@ def build_split_plan(
             holdout_ratio=args.holdout_ratio,
             min_holdout_rows=args.min_holdout_rows,
             enforce_non_empty_search=True,
-            gap_days=getattr(args, "holdout_gap_days", 0),
+            gap_days=effective_holdout_gap,
         )
         search_X = search_df
         search_y = y.loc[search_df.index]
@@ -406,6 +408,7 @@ def build_split_plan(
         train_start_ratio=args.train_start_ratio,
         min_rows=args.split_min_rows,
         embargo_days=args.embargo_days,
+        inner_embargo_days=getattr(args, "inner_embargo_days", None),
     )
 
     if args.split_mode == "nested_wf":
@@ -420,11 +423,14 @@ def build_split_plan(
         "split_mode": args.split_mode,
         "use_holdout": use_holdout,
         "holdout_ratio": args.holdout_ratio if use_holdout else None,
-        "holdout_gap_days": getattr(args, "holdout_gap_days", 0) if use_holdout else None,
+        "holdout_gap_days": effective_holdout_gap if use_holdout else None,
         "embargo_days": args.embargo_days if args.split_mode == "wf_embargo" else None,
         "n_folds": len(date_splits),
         "n_outer_folds": args.n_outer_folds if args.split_mode == "nested_wf" else None,
         "n_inner_folds": args.n_inner_folds if args.split_mode == "nested_wf" else None,
+        "inner_embargo_days": (
+            args.embargo_days if getattr(args, "inner_embargo_days", None) is None else args.inner_embargo_days
+        ) if args.split_mode == "nested_wf" else None,
         "train_start_ratio": args.train_start_ratio,
         "split_min_rows": args.split_min_rows,
     }
@@ -835,7 +841,10 @@ def _run_single_experiment(
         panel_df,
         final_eval_scores_df,
         date_col="date",
+        signal_date_col="signal_date",
         trade_date_col="trade_date",
+        execution_lag_days=1,
+        drop_untradable_signals=True,
     )
     report_scores_df = final_eval_scores_df[
         (final_eval_scores_df["trade_date"] >= report_start) & (final_eval_scores_df["trade_date"] <= report_end)

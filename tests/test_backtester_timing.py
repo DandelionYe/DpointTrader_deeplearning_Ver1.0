@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from backtester_engine import backtest_from_scores, prepare_scores_for_backtest
+from backtester_engine import (
+    _build_rebalance_calendar,
+    _current_execution_prices_no_carry,
+    backtest_from_scores,
+    prepare_scores_for_backtest,
+)
 from portfolio_builder import PortfolioConfig
 
 
@@ -42,6 +47,50 @@ def test_prepare_scores_for_backtest_shifts_to_next_trade_day():
     assert "signal_date" in prepared.columns
     assert "trade_date" in prepared.columns
     assert (pd.to_datetime(prepared["trade_date"]) > pd.to_datetime(prepared["signal_date"])).all()
+
+
+def test_prepare_scores_for_backtest_drops_untradable_terminal_signal():
+    panel_df = _sample_panel()
+    last_date = pd.to_datetime(panel_df["date"].max())
+    scores_df = pd.DataFrame(
+        {
+            "date": [last_date],
+            "ticker": ["A"],
+            "score": [0.5],
+        }
+    )
+
+    prepared = prepare_scores_for_backtest(panel_df, scores_df, execution_lag_days=1, drop_untradable_signals=True)
+    assert prepared.empty
+
+
+def test_execution_prices_do_not_carry_forward_missing_open():
+    panel_df = _sample_panel(5)
+    day = pd.Timestamp(panel_df["date"].iloc[1])
+    day_prices = panel_df[panel_df["date"] == day].copy()
+    day_prices.loc[day_prices["ticker"] == "B", "open_qfq"] = np.nan
+
+    execution_prices = _current_execution_prices_no_carry(
+        day_prices,
+        ticker_col="ticker",
+        price_col="open_qfq",
+    )
+
+    assert "A" in execution_prices
+    assert "B" not in execution_prices
+
+
+def test_build_rebalance_calendar_monthly_uses_first_trade_day():
+    panel_df = _sample_panel(50)
+    dates = sorted(pd.to_datetime(panel_df["date"].unique()))
+
+    calendar = _build_rebalance_calendar(dates, rebalance_freq="monthly", anchor="first")
+
+    assert len(calendar) >= 2
+    first_jan = min([d for d in dates if d.month == 1])
+    first_feb = min([d for d in dates if d.month == 2])
+    assert first_jan in calendar
+    assert first_feb in calendar
 
 
 def test_backtest_marks_to_market_every_panel_date():
