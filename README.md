@@ -78,7 +78,6 @@ Create an environment and install dependencies:
 
 ```bash
 pip install -r requirements.txt
-pip install -r requirements-dev.txt
 ```
 
 If PyTorch is not available, tabular workflows still run. Torch-dependent tests are skipped automatically.

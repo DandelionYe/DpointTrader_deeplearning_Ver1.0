@@ -373,7 +373,6 @@ def predict_panel(
     return_proba: bool = True,
     sequence_store: Optional[PanelSequenceStore] = None,
 ) -> pd.DataFrame:
-    del return_proba
     feature_cols = _feature_cols(X, date_col, ticker_col)
     is_sequence = getattr(model, "_is_panel_sequence_model", False)
 
@@ -396,7 +395,7 @@ def predict_panel(
             int(getattr(model, "_predict_batch_size", getattr(model, "_trained_batch_size", 64))),
         )
         scores = predict_pytorch_model_sequence(model, store, store.meta_df, device)
-        return pd.DataFrame(
+        out = pd.DataFrame(
             {
                 date_col: store.meta_df["date"].to_numpy(),
                 ticker_col: store.meta_df["ticker"].to_numpy(),
@@ -405,6 +404,9 @@ def predict_panel(
                 "probability_available": np.zeros(len(store.meta_df), dtype=bool),
             }
         )
+        if not return_proba:
+            return out[[date_col, ticker_col, "score"]].copy()
+        return out
 
     X_eval = X[feature_cols]
     preprocessor = getattr(model, "_preprocessor", None)
@@ -433,7 +435,7 @@ def predict_panel(
             proba = pd.Series(np.nan, index=X.index, dtype=np.float32)
             probability_available = False
 
-    return pd.DataFrame(
+    out = pd.DataFrame(
         {
             date_col: X[date_col].to_numpy(),
             ticker_col: X[ticker_col].to_numpy(),
@@ -442,6 +444,9 @@ def predict_panel(
             "probability_available": probability_available,
         }
     )
+    if not return_proba:
+        return out[[date_col, ticker_col, "score"]].copy()
+    return out
 
 
 def compute_oof_scores(
