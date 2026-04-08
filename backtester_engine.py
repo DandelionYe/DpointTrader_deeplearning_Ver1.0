@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 
 from allocator import allocate_orders, rebalance_orders
@@ -51,13 +52,22 @@ def prepare_scores_for_backtest(
     signal_date_col: str = "signal_date",
     execution_lag_days: int = 1,
     drop_untradable_signals: bool = True,
-) -> pd.DataFrame:
+    return_stats: bool = False,
+) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict[str, Any]]]:
+    prep_stats: Dict[str, Any] = {
+        "raw_signals": int(len(scores_df)),
+        "prepared_signals": 0,
+        "dropped_signals": 0,
+        "execution_lag_days": max(1, int(execution_lag_days)),
+    }
     if scores_df.empty:
         prepared = scores_df.copy()
         if signal_date_col not in prepared.columns and date_col in prepared.columns:
             prepared[signal_date_col] = prepared[date_col]
         if trade_date_col not in prepared.columns:
             prepared[trade_date_col] = pd.NaT
+        if return_stats:
+            return prepared, prep_stats
         return prepared
 
     prepared = scores_df.copy()
@@ -70,14 +80,22 @@ def prepare_scores_for_backtest(
     if trade_date_col in prepared.columns:
         prepared[trade_date_col] = pd.to_datetime(prepared[trade_date_col])
         if drop_untradable_signals:
-            return prepared[prepared[trade_date_col].notna()].copy()
+            prepared = prepared[prepared[trade_date_col].notna()].copy()
+        prep_stats["prepared_signals"] = int(len(prepared))
+        prep_stats["dropped_signals"] = int(prep_stats["raw_signals"] - prep_stats["prepared_signals"])
+        if return_stats:
+            return prepared.copy(), prep_stats
         return prepared.copy()
 
     trading_dates = pd.Index(sorted(pd.to_datetime(panel_df[date_col].unique())))
     if trading_dates.empty:
         prepared[trade_date_col] = pd.NaT
         if drop_untradable_signals:
-            return prepared.iloc[0:0].copy()
+            prepared = prepared.iloc[0:0].copy()
+        prep_stats["prepared_signals"] = int(len(prepared))
+        prep_stats["dropped_signals"] = int(prep_stats["raw_signals"] - prep_stats["prepared_signals"])
+        if return_stats:
+            return prepared, prep_stats
         return prepared
 
     signal_dates = pd.DatetimeIndex(prepared[date_col])
@@ -88,8 +106,30 @@ def prepare_scores_for_backtest(
         for pos in next_positions
     ]
     if drop_untradable_signals:
-        return prepared[prepared[trade_date_col].notna()].copy()
+        prepared = prepared[prepared[trade_date_col].notna()].copy()
+    prep_stats["prepared_signals"] = int(len(prepared))
+    prep_stats["dropped_signals"] = int(prep_stats["raw_signals"] - prep_stats["prepared_signals"])
+    if return_stats:
+        return prepared, prep_stats
     return prepared
+
+
+def validate_prepared_scores(
+    scores_df: pd.DataFrame,
+    *,
+    signal_date_col: str = "signal_date",
+    trade_date_col: str = "trade_date",
+) -> pd.DataFrame:
+    required = {signal_date_col, trade_date_col}
+    missing = required - set(scores_df.columns)
+    if missing:
+        raise ValueError(f"scores_df missing required prepared columns: {sorted(missing)}")
+    validated = scores_df.copy()
+    validated[signal_date_col] = pd.to_datetime(validated[signal_date_col])
+    validated[trade_date_col] = pd.to_datetime(validated[trade_date_col])
+    if validated[trade_date_col].isna().any():
+        raise ValueError("scores_df contains NaT trade_date; prepare scores before backtesting")
+    return validated
 
 
 def _current_execution_prices_no_carry(
@@ -178,10 +218,12 @@ def backtest_from_scores(
     ticker_col: str = "ticker",
     date_col: str = "date",
     trade_date_col: str = "trade_date",
+    signal_date_col: str = "signal_date",
     price_cols: Optional[Dict[str, str]] = None,
     initial_cash: float = 100000.0,
     start_date: Optional[pd.Timestamp] = None,
     end_date: Optional[pd.Timestamp] = None,
+    rebalance_anchor: str = "first",
 ) -> BacktestResult:
     notes: List[str] = []
     raw_panel_df = panel_df.copy()
@@ -194,10 +236,9 @@ def backtest_from_scores(
             "low": "low_qfq",
         }
 
-    scores_df = prepare_scores_for_backtest(
-        raw_panel_df,
+    scores_df = validate_prepared_scores(
         scores_df,
-        date_col=date_col,
+        signal_date_col=signal_date_col,
         trade_date_col=trade_date_col,
     )
 
@@ -228,6 +269,19 @@ def backtest_from_scores(
         pd.Timestamp(trade_date): group.copy()
         for trade_date, group in scores_df.groupby(trade_date_col)
     }
+    signal_trade_lag_days = (
+        (scores_df[trade_date_col] - scores_df[signal_date_col]).dt.days
+        if signal_date_col in scores_df.columns and not scores_df.empty
+        else pd.Series(dtype=float)
+    )
+    prep_stats = {
+        "raw_signals": int(len(scores_df)),
+        "prepared_signals": int(len(scores_df)),
+        "dropped_signals": 0,
+        "avg_signal_to_trade_days": float(signal_trade_lag_days.mean()) if not signal_trade_lag_days.empty else 0.0,
+        "min_signal_to_trade_days": int(signal_trade_lag_days.min()) if not signal_trade_lag_days.empty else 0,
+        "max_signal_to_trade_days": int(signal_trade_lag_days.max()) if not signal_trade_lag_days.empty else 0,
+    }
 
     all_orders: List[Dict[str, object]] = []
     all_fills: List[Dict[str, object]] = []
@@ -242,7 +296,14 @@ def backtest_from_scores(
         ticker_col=ticker_col,
         close_col=price_cols["close"],
     )
-    rebalance_calendar = _build_rebalance_calendar(dates, rebalance_freq=portfolio_config.rebalance_freq, anchor="first")
+    rebalance_calendar = _build_rebalance_calendar(
+        dates,
+        rebalance_freq=portfolio_config.rebalance_freq,
+        anchor=rebalance_anchor,
+    )
+    rebalance_days_without_scores = 0
+    rebalance_days_without_tradable_scores = 0
+    tradable_coverage_values: List[float] = []
 
     for date in dates:
         day_prices = panel_df[panel_df[date_col] == date]
@@ -263,10 +324,16 @@ def backtest_from_scores(
             pd.Timestamp(date) in rebalance_calendar and not day_scores.empty
         )
         rebalance_bucket = rebalance_calendar.get(pd.Timestamp(date))
+        if pd.Timestamp(date) in rebalance_calendar and day_scores.empty:
+            rebalance_days_without_scores += 1
 
         if should_rebalance:
             tradable_scores = day_scores[day_scores[ticker_col].isin(execution_prices.keys())].copy()
+            tradable_coverage_values.append(
+                float(len(tradable_scores) / len(day_scores)) if len(day_scores) else 0.0
+            )
             if tradable_scores.empty:
+                rebalance_days_without_tradable_scores += 1
                 notes.append(f"{pd.Timestamp(date).date()}: rebalance day had no tradable scores at execution open.")
             else:
                 target_portfolio = build_portfolio(
@@ -372,7 +439,15 @@ def backtest_from_scores(
         orders=orders,
         fills=fills,
         portfolio_config=portfolio_config,
-        execution_stats=engine.get_stats(),
+        execution_stats={
+            **engine.get_stats(),
+            **prep_stats,
+            "rebalance_anchor": rebalance_anchor,
+            "rebalance_days_total": int(len(rebalance_calendar)),
+            "rebalance_days_without_scores": int(rebalance_days_without_scores),
+            "rebalance_days_without_tradable_scores": int(rebalance_days_without_tradable_scores),
+            "avg_tradable_score_coverage": float(np.mean(tradable_coverage_values)) if tradable_coverage_values else 0.0,
+        },
         notes=notes,
     )
 
@@ -441,4 +516,5 @@ __all__ = [
     "backtest_from_scores",
     "compute_buy_and_hold_benchmark",
     "prepare_scores_for_backtest",
+    "validate_prepared_scores",
 ]

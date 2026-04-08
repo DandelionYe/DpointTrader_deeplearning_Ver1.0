@@ -170,11 +170,14 @@ class RollingRetrainer:
             equity_path = os.path.join(snapshot_dir, "equity_curve.csv")
 
             model_path = save_trained_model(final_model, search_result.best_config, model_path)
-            scores_df = prepare_scores_for_backtest(
+            scores_df, prep_stats = prepare_scores_for_backtest(
                 panel_df,
                 scores_df,
                 date_col="date",
+                signal_date_col="signal_date",
                 trade_date_col="trade_date",
+                execution_lag_days=int(getattr(args, "execution_lag_days", 1)),
+                return_stats=True,
             )
             scores_df.to_csv(scores_path, index=False)
 
@@ -193,6 +196,8 @@ class RollingRetrainer:
                 start_date=pd.Timestamp(scores_df["trade_date"].min()),
                 end_date=pd.Timestamp(scores_df["trade_date"].max()),
                 trade_date_col="trade_date",
+                signal_date_col="signal_date",
+                rebalance_anchor=str(getattr(args, "rebalance_anchor", "first")),
             )
             equity_curve = backtest_result.equity_curve.copy()
             equity_curve.to_csv(equity_path, index=False)
@@ -203,6 +208,10 @@ class RollingRetrainer:
             metrics["evaluation_split"] = "forward_eval"
             metrics["evaluation_start_date"] = str(scores_df["trade_date"].min())
             metrics["evaluation_end_date"] = str(scores_df["trade_date"].max())
+            metrics["raw_signals"] = int(prep_stats.get("raw_signals", 0))
+            metrics["prepared_signals"] = int(prep_stats.get("prepared_signals", 0))
+            metrics["dropped_signals"] = int(prep_stats.get("dropped_signals", 0))
+            metrics["execution_lag_days"] = int(prep_stats.get("execution_lag_days", getattr(args, "execution_lag_days", 1)))
             create_manifest(
                 snapshot_dir,
                 run_id=snapshot_idx + 1,

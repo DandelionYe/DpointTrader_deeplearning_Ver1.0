@@ -61,6 +61,10 @@ def save_to_excel(
             if "date" in df.columns:
                 df["date"] = df["date"].astype(str)
             df.to_excel(writer, sheet_name="PortfolioEquity", index=False)
+            if "is_rebalance_day" in df.columns:
+                rebalance_df = df[df["is_rebalance_day"].fillna(False)].copy()
+                if not rebalance_df.empty:
+                    rebalance_df.to_excel(writer, sheet_name="RebalanceDays", index=False)
 
         if benchmark_curve is not None and not benchmark_curve.empty:
             df = benchmark_curve.copy()
@@ -94,6 +98,14 @@ def save_to_excel(
             df = scores_df.copy()
             if "date" in df.columns:
                 df["date"] = df["date"].astype(str)
+            if "signal_date" in df.columns:
+                df["signal_date"] = pd.to_datetime(df["signal_date"]).astype(str)
+            if "trade_date" in df.columns:
+                trade_dates = pd.to_datetime(df["trade_date"])
+                df["trade_date"] = trade_dates.astype(str)
+                if "signal_date" in scores_df.columns:
+                    signal_dates = pd.to_datetime(scores_df["signal_date"])
+                    df["trade_lag_days"] = (trade_dates - signal_dates).dt.days
             df.to_excel(writer, sheet_name="DailyScores", index=False)
 
         # 配置

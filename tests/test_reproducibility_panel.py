@@ -114,7 +114,7 @@ class TestReproducibilityPanel:
             assert abs(score1 - score2) < 1e-6
 
     def test_backtest_reproducibility(self):
-        from backtester_engine import backtest_from_scores
+        from backtester_engine import backtest_from_scores, prepare_scores_for_backtest
         from portfolio_builder import PortfolioConfig
 
         dates = pd.date_range("2020-01-01", periods=80, freq="B")
@@ -154,15 +154,17 @@ class TestReproducibilityPanel:
             rebalance_freq="monthly",
         )
 
+        prepared_scores = prepare_scores_for_backtest(panel_df, scores_df)
+
         result1 = backtest_from_scores(
             panel_df,
-            scores_df,
+            prepared_scores,
             portfolio_config=config,
             initial_cash=100000.0,
         )
         result2 = backtest_from_scores(
             panel_df,
-            scores_df,
+            prepared_scores,
             portfolio_config=config,
             initial_cash=100000.0,
         )

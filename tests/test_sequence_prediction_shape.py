@@ -55,4 +55,6 @@ def test_sequence_prediction_shape_by_ticker():
 
     expected_rows = sum(max(0, len(dates) - 20 + 1) for _ in tickers)
     assert len(pred) == expected_rows
-    assert list(pred.columns) == ["date", "ticker", "score", "proba"]
+    assert list(pred.columns) == ["date", "ticker", "score", "proba", "probability_available"]
+    assert pred["probability_available"].eq(False).all()
+    assert pred["proba"].isna().all()

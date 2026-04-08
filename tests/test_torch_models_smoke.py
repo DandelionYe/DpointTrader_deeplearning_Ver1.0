@@ -379,3 +379,30 @@ class TestTorchModelsSmoke:
         assert "probability_available" in pred.columns
         assert pred["probability_available"].eq(False).all()
         assert pred["proba"].isna().all()
+
+    def test_predict_panel_marks_proba_unavailable_for_torch_tabular_model(self, tiny_tabular_data):
+        from panel_trainer import predict_panel, train_panel_model
+
+        X, y = tiny_tabular_data
+        panel_X = X.copy()
+        panel_X["date"] = pd.date_range("2020-01-01", periods=len(X), freq="B")
+        panel_X["ticker"] = ["A"] * len(X)
+        config = {
+            "model_type": "mlp",
+            "device": "cpu",
+            "model_params": {
+                "hidden_dims": [16, 8],
+                "hidden_dim": 16,
+                "dropout_rate": 0.1,
+                "learning_rate": 0.01,
+                "weight_decay": 1e-4,
+                "epochs": 1,
+                "batch_size": 16,
+            },
+        }
+
+        model, _ = train_panel_model(panel_X, y, config, date_col="date", ticker_col="ticker", seed=42)
+        pred = predict_panel(model, panel_X, date_col="date", ticker_col="ticker")
+
+        assert pred["probability_available"].eq(False).all()
+        assert pred["proba"].isna().all()

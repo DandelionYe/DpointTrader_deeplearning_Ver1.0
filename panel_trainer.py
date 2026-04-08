@@ -401,7 +401,8 @@ def predict_panel(
                 date_col: store.meta_df["date"].to_numpy(),
                 ticker_col: store.meta_df["ticker"].to_numpy(),
                 "score": scores.to_numpy(),
-                "proba": scores.to_numpy(),
+                "proba": np.full(len(store.meta_df), np.nan, dtype=np.float32),
+                "probability_available": np.zeros(len(store.meta_df), dtype=bool),
             }
         )
 
@@ -415,8 +416,8 @@ def predict_panel(
     if is_torch_model_instance(model):
         device = resolve_torch_device(str(getattr(model, "_device_preference", "auto")))
         score = predict_pytorch_model_tabular(model, X_eval, device)
-        proba = score
-        probability_available = True
+        proba = pd.Series(np.nan, index=X.index, dtype=np.float32)
+        probability_available = False
     else:
         X_values = X_eval.to_numpy()
         if hasattr(model, "predict_proba"):

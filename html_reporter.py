@@ -29,6 +29,7 @@ def generate_html_report(
     output_path: str,
     *,
     equity_curve: Optional[pd.DataFrame] = None,
+    scores_df: Optional[pd.DataFrame] = None,
     benchmark_curve: Optional[pd.DataFrame] = None,
     execution_stats: Optional[Dict[str, Any]] = None,
     metrics: Optional[Dict[str, Any]] = None,
@@ -184,6 +185,21 @@ def generate_html_report(
         </table>
 """
 
+    if scores_df is not None and not scores_df.empty and {"signal_date", "trade_date"}.issubset(scores_df.columns):
+        signal_dates = pd.to_datetime(scores_df["signal_date"])
+        trade_dates = pd.to_datetime(scores_df["trade_date"])
+        lag_days = (trade_dates - signal_dates).dt.days
+        html += f"""
+        <h2>Signal To Trade</h2>
+        <table>
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>Signals in report</td><td>{len(scores_df)}</td></tr>
+            <tr><td>Average lag days</td><td>{lag_days.mean():.2f}</td></tr>
+            <tr><td>Min lag days</td><td>{lag_days.min()}</td></tr>
+            <tr><td>Max lag days</td><td>{lag_days.max()}</td></tr>
+        </table>
+"""
+
     if execution_stats:
         html += """
         <h2>Execution Stats</h2>
@@ -205,6 +221,23 @@ def generate_html_report(
 """
             for reason, count in reject_reasons.items():
                 html += f"            <tr><td>{reason}</td><td>{count}</td></tr>\n"
+            html += """        </table>
+"""
+
+    if equity_curve is not None and not equity_curve.empty and {"is_rebalance_day", "rebalance_bucket"}.issubset(equity_curve.columns):
+        rebalance_df = equity_curve[equity_curve["is_rebalance_day"].fillna(False)].copy()
+        if not rebalance_df.empty:
+            html += """
+        <h2>Rebalance Days</h2>
+        <table>
+            <tr><th>Bucket</th><th>Date</th><th>Equity</th><th>Holdings</th></tr>
+"""
+            for _, row in rebalance_df.iterrows():
+                html += (
+                    f"            <tr><td>{row.get('rebalance_bucket')}</td>"
+                    f"<td>{row.get('date')}</td><td>{row.get('equity', '')}</td>"
+                    f"<td>{row.get('n_holdings', '')}</td></tr>\n"
+                )
             html += """        </table>
 """
 

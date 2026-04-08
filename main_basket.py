@@ -73,6 +73,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--top_k", type=int, default=DEFAULT_TOP_K)
     parser.add_argument("--rebalance_freq", type=str, choices=["daily", "weekly", "monthly"], default=DEFAULT_REBALANCE_FREQ)
+    parser.add_argument("--rebalance_anchor", type=str, choices=["first", "last"], default="first")
     parser.add_argument("--weighting", type=str, choices=["equal", "score", "vol_inv"], default=DEFAULT_WEIGHTING)
     parser.add_argument("--max_weight", type=float, default=DEFAULT_MAX_WEIGHT)
     parser.add_argument("--cash_buffer", type=float, default=0.05)
@@ -82,6 +83,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--initial_cash", type=float, default=100000.0)
     parser.add_argument("--benchmark_mode", choices=["none", "equal_weight"], default="equal_weight")
+    parser.add_argument("--execution_lag_days", type=int, default=1)
     parser.add_argument("--research_start_date", type=str, default=None)
     parser.add_argument("--research_end_date", type=str, default=None)
     parser.add_argument("--report_start_date", type=str, default=None)
@@ -837,15 +839,30 @@ def _run_single_experiment(
         )
         logger.info("Model saved to: %s", model_path)
 
-    final_eval_scores_df = prepare_scores_for_backtest(
+    final_eval_scores_df, prep_stats = prepare_scores_for_backtest(
         panel_df,
         final_eval_scores_df,
         date_col="date",
         signal_date_col="signal_date",
         trade_date_col="trade_date",
-        execution_lag_days=1,
+        execution_lag_days=args.execution_lag_days,
         drop_untradable_signals=True,
+        return_stats=True,
     )
+    train_metrics.update(
+        {
+            "raw_signals": int(prep_stats.get("raw_signals", 0)),
+            "prepared_signals": int(prep_stats.get("prepared_signals", 0)),
+            "dropped_signals": int(prep_stats.get("dropped_signals", 0)),
+            "execution_lag_days": int(prep_stats.get("execution_lag_days", args.execution_lag_days)),
+        }
+    )
+    if prep_stats.get("dropped_signals", 0):
+        train_notes.append(
+            "Signal preparation dropped "
+            f"{prep_stats['dropped_signals']} of {prep_stats['raw_signals']} raw signals "
+            f"at execution lag {prep_stats['execution_lag_days']}."
+        )
     report_scores_df = final_eval_scores_df[
         (final_eval_scores_df["trade_date"] >= report_start) & (final_eval_scores_df["trade_date"] <= report_end)
     ].copy()
@@ -864,9 +881,11 @@ def _run_single_experiment(
         ticker_col="ticker",
         date_col="date",
         trade_date_col="trade_date",
+        signal_date_col="signal_date",
         initial_cash=args.initial_cash,
         start_date=report_start,
         end_date=report_end,
+        rebalance_anchor=args.rebalance_anchor,
     )
     logger.info("Backtest final equity: %s", f"{backtest_result.equity_curve['equity'].iloc[-1]:,.2f}")
     logger.info("Total trades: %s", len(backtest_result.trades))
@@ -878,6 +897,10 @@ def _run_single_experiment(
             "orders_rejected": int(execution_stats.get("orders_rejected", 0)),
             "total_commission": float(execution_stats.get("total_commission", 0.0)),
             "total_slippage": float(execution_stats.get("total_slippage", 0.0)),
+            "avg_tradable_score_coverage": float(execution_stats.get("avg_tradable_score_coverage", 0.0)),
+            "rebalance_days_total": int(execution_stats.get("rebalance_days_total", 0)),
+            "rebalance_days_without_scores": int(execution_stats.get("rebalance_days_without_scores", 0)),
+            "rebalance_days_without_tradable_scores": int(execution_stats.get("rebalance_days_without_tradable_scores", 0)),
         }
     )
     reject_reasons = execution_stats.get("reject_reasons", {}) or {}
@@ -925,6 +948,8 @@ def _run_single_experiment(
         "weighting": args.weighting,
         "max_weight": args.max_weight,
         "rebalance_freq": args.rebalance_freq,
+        "rebalance_anchor": args.rebalance_anchor,
+        "execution_lag_days": args.execution_lag_days,
         "seed": args.seed,
         "n_folds": args.n_folds,
         "research_start_date": str(research_start),
@@ -960,6 +985,7 @@ def _run_single_experiment(
     generate_html_report(
         html_path,
         equity_curve=backtest_result.equity_curve,
+        scores_df=report_scores_df,
         benchmark_curve=benchmark_curve,
         execution_stats=execution_stats,
         metrics=train_metrics,
