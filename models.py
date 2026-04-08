@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import math
 import gc
+import json
 import os
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, Optional, Tuple
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
@@ -67,6 +69,8 @@ __all__ = [
     "TORCH_IMPORT_ERROR",
     "TORCH_MODEL_TYPES",
     "clear_torch_cuda_cache",
+    "save_trained_model",
+    "load_saved_model",
 ]
 
 
@@ -1464,3 +1468,106 @@ def predict_dpoint(model: Any, X: pd.DataFrame) -> pd.Series:
         return pd.Series(proba, index=getattr(X, "index", None), name="dpoint")
     pred = model.predict(X_values)
     return pd.Series(pred, index=getattr(X, "index", None), name="dpoint")
+
+
+def _torch_feature_meta(model: Any) -> Dict[str, Any]:
+    return {
+        "feature_names": list(getattr(model, "_feature_names", [])),
+        "seq_len": int(getattr(model, "_seq_len", 20)),
+        "is_panel_sequence_model": bool(getattr(model, "_is_panel_sequence_model", False)),
+        "device_preference": str(getattr(model, "_device_preference", "auto")),
+        "trained_batch_size": int(getattr(model, "_trained_batch_size", 64)),
+        "predict_batch_size": int(getattr(model, "_predict_batch_size", 0)),
+        "loader_settings": dict(getattr(model, "_loader_settings", {})),
+        "auto_batch_tune": bool(getattr(model, "_auto_batch_tune", True)),
+        "target_vram_util": float(getattr(model, "_target_vram_util", 0.88)),
+        "train_target_vram_util": float(getattr(model, "_train_target_vram_util", getattr(model, "_target_vram_util", 0.88))),
+        "predict_target_vram_util": float(getattr(model, "_predict_target_vram_util", getattr(model, "_target_vram_util", 0.88))),
+        "use_amp": bool(getattr(model, "_use_amp", False)),
+        "use_tf32": bool(getattr(model, "_use_tf32", False)),
+        "has_preprocessor": getattr(model, "_preprocessor", None) is not None,
+    }
+
+
+def save_trained_model(model: Any, model_config: Dict[str, Any], destination: str) -> str:
+    if is_torch_model_instance(model):
+        os.makedirs(destination, exist_ok=True)
+        state_path = os.path.join(destination, "model_state.pt")
+        config_path = os.path.join(destination, "model_config.json")
+        feature_meta_path = os.path.join(destination, "feature_meta.json")
+        normalizer_path = os.path.join(destination, "normalizer.pkl")
+        torch.save(model.state_dict(), state_path)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(model_config, f, ensure_ascii=False, indent=2)
+        with open(feature_meta_path, "w", encoding="utf-8") as f:
+            json.dump(_torch_feature_meta(model), f, ensure_ascii=False, indent=2)
+        if getattr(model, "_preprocessor", None) is not None:
+            joblib.dump(model._preprocessor, normalizer_path)
+        return destination
+
+    if destination.endswith(".joblib"):
+        model_path = destination
+    else:
+        model_path = f"{destination}.joblib"
+    joblib.dump(model, model_path)
+    return model_path
+
+
+def _build_saved_torch_model(model_config: Dict[str, Any], feature_meta: Dict[str, Any]) -> Any:
+    _require_torch("load_saved_model")
+    model_type = str(model_config.get("model_type", "mlp")).lower()
+    model_params = dict(model_config.get("model_params", {}))
+    feature_names = list(feature_meta.get("feature_names", []))
+    input_dim = len(feature_names)
+    if input_dim <= 0:
+        raise ValueError("Saved torch model is missing feature_names/input_dim metadata")
+
+    if model_type == "mlp":
+        hidden_dim = int(model_params.get("hidden_dim", 64))
+        hidden_dims = [int(v) for v in model_params.get("hidden_dims", [hidden_dim])]
+        model = MLP(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            dropout_rate=float(model_params.get("dropout_rate", 0.3)),
+            hidden_dims=hidden_dims,
+        )
+    else:
+        model = _make_sequence_model(model_type, input_dim, model_params)
+
+    state_path = feature_meta["_state_path"]
+    state_dict = torch.load(state_path, map_location="cpu")
+    model.load_state_dict(state_dict)
+    model.eval()
+    model._feature_names = feature_names
+    model._seq_len = int(feature_meta.get("seq_len", model_params.get("seq_len", 20)))
+    model._is_panel_sequence_model = bool(feature_meta.get("is_panel_sequence_model", False))
+    model._device_preference = str(feature_meta.get("device_preference", model_config.get("device", "auto")))
+    model._trained_batch_size = int(feature_meta.get("trained_batch_size", model_params.get("batch_size", 64)))
+    model._predict_batch_size = int(feature_meta.get("predict_batch_size", model._trained_batch_size))
+    model._loader_settings = dict(feature_meta.get("loader_settings", {}))
+    model._auto_batch_tune = bool(feature_meta.get("auto_batch_tune", True))
+    model._target_vram_util = float(feature_meta.get("target_vram_util", 0.88))
+    model._train_target_vram_util = float(feature_meta.get("train_target_vram_util", model._target_vram_util))
+    model._predict_target_vram_util = float(feature_meta.get("predict_target_vram_util", model._target_vram_util))
+    model._use_amp = bool(feature_meta.get("use_amp", False))
+    model._use_tf32 = bool(feature_meta.get("use_tf32", False))
+    normalizer_path = feature_meta.get("_normalizer_path")
+    if normalizer_path and os.path.exists(normalizer_path):
+        model._preprocessor = joblib.load(normalizer_path)
+    return model
+
+
+def load_saved_model(path: str) -> Any:
+    if os.path.isdir(path):
+        state_path = os.path.join(path, "model_state.pt")
+        config_path = os.path.join(path, "model_config.json")
+        feature_meta_path = os.path.join(path, "feature_meta.json")
+        if os.path.exists(state_path) and os.path.exists(config_path) and os.path.exists(feature_meta_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                model_config = json.load(f)
+            with open(feature_meta_path, "r", encoding="utf-8") as f:
+                feature_meta = json.load(f)
+            feature_meta["_state_path"] = state_path
+            feature_meta["_normalizer_path"] = os.path.join(path, "normalizer.pkl")
+            return _build_saved_torch_model(model_config, feature_meta)
+    return joblib.load(path)

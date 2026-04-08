@@ -29,6 +29,8 @@ def generate_html_report(
     output_path: str,
     *,
     equity_curve: Optional[pd.DataFrame] = None,
+    benchmark_curve: Optional[pd.DataFrame] = None,
+    execution_stats: Optional[Dict[str, Any]] = None,
     metrics: Optional[Dict[str, Any]] = None,
     config: Optional[Dict[str, Any]] = None,
     basket_info: Optional[Dict[str, Any]] = None,
@@ -172,6 +174,40 @@ def generate_html_report(
 """
 
     # 配置信息
+    if benchmark_curve is not None and not benchmark_curve.empty and "bnh_cum_return" in benchmark_curve.columns:
+        benchmark_total_return = float(benchmark_curve["bnh_cum_return"].iloc[-1])
+        html += f"""
+        <h2>Benchmark</h2>
+        <table>
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>Benchmark total return</td><td>{benchmark_total_return:.2%}</td></tr>
+        </table>
+"""
+
+    if execution_stats:
+        html += """
+        <h2>Execution Stats</h2>
+        <table>
+            <tr><th>Metric</th><th>Value</th></tr>
+"""
+        for key, value in execution_stats.items():
+            if key == "reject_reasons":
+                continue
+            html += f"            <tr><td>{key}</td><td>{value}</td></tr>\n"
+        html += """        </table>
+"""
+        reject_reasons = execution_stats.get("reject_reasons", {}) or {}
+        if reject_reasons:
+            html += """
+        <h2>Reject Reasons</h2>
+        <table>
+            <tr><th>Reason</th><th>Count</th></tr>
+"""
+            for reason, count in reject_reasons.items():
+                html += f"            <tr><td>{reason}</td><td>{count}</td></tr>\n"
+            html += """        </table>
+"""
+
     if config:
         html += """
         <h2>⚙️ 配置信息</h2>

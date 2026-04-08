@@ -28,6 +28,8 @@ def save_to_excel(
     output_path: str,
     *,
     equity_curve: Optional[pd.DataFrame] = None,
+    benchmark_curve: Optional[pd.DataFrame] = None,
+    execution_stats: Optional[Dict[str, Any]] = None,
     orders: Optional[pd.DataFrame] = None,
     trades: Optional[pd.DataFrame] = None,
     positions: Optional[pd.DataFrame] = None,
@@ -59,6 +61,12 @@ def save_to_excel(
             if "date" in df.columns:
                 df["date"] = df["date"].astype(str)
             df.to_excel(writer, sheet_name="PortfolioEquity", index=False)
+
+        if benchmark_curve is not None and not benchmark_curve.empty:
+            df = benchmark_curve.copy()
+            if "date" in df.columns:
+                df["date"] = df["date"].astype(str)
+            df.to_excel(writer, sheet_name="BenchmarkEquity", index=False)
 
         # 订单
         if orders is not None and not orders.empty:
@@ -103,6 +111,16 @@ def save_to_excel(
                 columns=["metric", "value"]
             )
             metrics_df.to_excel(writer, sheet_name="Metrics", index=False)
+
+        if execution_stats:
+            summary_items = [(k, v) for k, v in execution_stats.items() if k != "reject_reasons"]
+            if summary_items:
+                execution_df = pd.DataFrame(summary_items, columns=["metric", "value"])
+                execution_df.to_excel(writer, sheet_name="ExecutionStats", index=False)
+            reject_reasons = execution_stats.get("reject_reasons", {}) or {}
+            if reject_reasons:
+                reject_df = pd.DataFrame(list(reject_reasons.items()), columns=["reason", "count"])
+                reject_df.to_excel(writer, sheet_name="RejectReasons", index=False)
 
         # 日志
         if log_notes:

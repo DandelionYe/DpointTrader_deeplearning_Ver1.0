@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import joblib
 import pandas as pd
 
-from backtester_engine import backtest_from_scores
+from backtester_engine import backtest_from_scores, prepare_scores_for_backtest
+from models import save_trained_model
 from panel_trainer import align_scores_with_labels, evaluate_scores_df, predict_panel, train_panel_model
 from portfolio_builder import PortfolioConfig
 from search_engine import run_search
@@ -169,7 +169,13 @@ class RollingRetrainer:
             scores_path = os.path.join(snapshot_dir, "scores.csv")
             equity_path = os.path.join(snapshot_dir, "equity_curve.csv")
 
-            joblib.dump(final_model, model_path)
+            model_path = save_trained_model(final_model, search_result.best_config, model_path)
+            scores_df = prepare_scores_for_backtest(
+                panel_df,
+                scores_df,
+                date_col="date",
+                trade_date_col="trade_date",
+            )
             scores_df.to_csv(scores_path, index=False)
 
             portfolio_config = PortfolioConfig(
@@ -184,8 +190,9 @@ class RollingRetrainer:
                 scores_df,
                 portfolio_config=portfolio_config,
                 initial_cash=float(getattr(args, "initial_cash", 100000.0)),
-                start_date=pd.Timestamp(scores_df["date"].min()),
-                end_date=pd.Timestamp(scores_df["date"].max()),
+                start_date=pd.Timestamp(scores_df["trade_date"].min()),
+                end_date=pd.Timestamp(scores_df["trade_date"].max()),
+                trade_date_col="trade_date",
             )
             equity_curve = backtest_result.equity_curve.copy()
             equity_curve.to_csv(equity_path, index=False)
@@ -194,8 +201,8 @@ class RollingRetrainer:
             metrics["search_rank_ic_mean"] = float(search_result.best_metrics.get("rank_ic_mean", 0.0))
             metrics["final_rank_ic_mean"] = float(metrics.get("rank_ic_mean", 0.0))
             metrics["evaluation_split"] = "forward_eval"
-            metrics["evaluation_start_date"] = str(scores_df["date"].min())
-            metrics["evaluation_end_date"] = str(scores_df["date"].max())
+            metrics["evaluation_start_date"] = str(scores_df["trade_date"].min())
+            metrics["evaluation_end_date"] = str(scores_df["trade_date"].max())
             create_manifest(
                 snapshot_dir,
                 run_id=snapshot_idx + 1,

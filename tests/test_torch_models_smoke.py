@@ -1,6 +1,8 @@
 """
 测试Torch模型smoke测试
 """
+import os
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -40,6 +42,12 @@ class TestTorchModelsSmoke:
         y_seq = (np.random.randn(n_samples) > 0).astype(np.float32)
         
         return X_seq, y_seq, seq_len
+
+    @pytest.fixture
+    def local_tmpdir(self):
+        path = os.path.join(".local", "tmp", "torch_smoke_artifacts")
+        os.makedirs(path, exist_ok=True)
+        yield path
     
     def test_mlp_train_predict_smoke(self, tiny_tabular_data):
         """测试MLP训练+预测路径"""
@@ -314,3 +322,60 @@ class TestTorchModelsSmoke:
         assert models._is_cuda_oom_error(RuntimeError("CUDA error: out of memory")) is True
         assert models._is_cuda_oom_error(RuntimeError("cudaErrorMemoryAllocation")) is True
         assert models._is_cuda_oom_error(RuntimeError("unrelated runtime error")) is False
+
+    def test_torch_models_save_as_state_dict_artifact(self, tiny_tabular_data, local_tmpdir):
+        from panel_trainer import train_panel_model
+        from models import load_saved_model, save_trained_model
+
+        X, y = tiny_tabular_data
+        panel_X = X.copy()
+        panel_X["date"] = pd.date_range("2020-01-01", periods=len(X), freq="B")
+        panel_X["ticker"] = ["A"] * len(X)
+        config = {
+            "model_type": "mlp",
+            "device": "cpu",
+            "model_params": {
+                "hidden_dims": [16, 8],
+                "hidden_dim": 16,
+                "dropout_rate": 0.1,
+                "learning_rate": 0.01,
+                "weight_decay": 1e-4,
+                "epochs": 1,
+                "batch_size": 16,
+            },
+        }
+
+        model, _ = train_panel_model(panel_X, y, config, date_col="date", ticker_col="ticker", seed=42)
+
+        saved_path = save_trained_model(model, config, os.path.join(local_tmpdir, "torch_model"))
+        assert os.path.isdir(saved_path)
+        assert os.path.exists(os.path.join(saved_path, "model_state.pt"))
+        assert os.path.exists(os.path.join(saved_path, "model_config.json"))
+        assert os.path.exists(os.path.join(saved_path, "feature_meta.json"))
+        assert os.path.exists(os.path.join(saved_path, "normalizer.pkl"))
+
+        restored = load_saved_model(saved_path)
+        assert hasattr(restored, "state_dict")
+        assert getattr(restored, "_preprocessor", None) is not None
+
+    def test_predict_panel_marks_proba_unavailable_for_non_probabilistic_model(self):
+        from panel_trainer import predict_panel
+
+        class PredictOnlyModel:
+            def predict(self, X):
+                return np.ones(len(X), dtype=np.float32)
+
+        X = pd.DataFrame(
+            {
+                "date": pd.date_range("2020-01-01", periods=4, freq="B"),
+                "ticker": ["A"] * 4,
+                "feature_1": [0.1, 0.2, 0.3, 0.4],
+            }
+        )
+
+        pred = predict_panel(PredictOnlyModel(), X, date_col="date", ticker_col="ticker")
+
+        assert "proba" in pred.columns
+        assert "probability_available" in pred.columns
+        assert pred["probability_available"].eq(False).all()
+        assert pred["proba"].isna().all()

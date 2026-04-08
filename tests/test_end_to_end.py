@@ -124,11 +124,19 @@ def _run_case(workdir, monkeypatch, *, case_name: str, extra_args):
     equity_df = pd.read_csv(equity_path)
     assert not scores_df.empty
     assert not equity_df.empty
+    assert "trade_date" in scores_df.columns
+    assert "signal_date" in scores_df.columns
+    signal_dates = pd.to_datetime(scores_df["signal_date"])
+    trade_dates = pd.to_datetime(scores_df["trade_date"])
+    assert (trade_dates > signal_dates).all()
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
     assert manifest["metrics"]["evaluation_split"] in {"oof", "holdout"}
     assert "split_info" in manifest
+    assert "orders_submitted" in manifest["metrics"]
+    assert "orders_filled" in manifest["metrics"]
+    assert "orders_rejected" in manifest["metrics"]
     return manifest
 
 

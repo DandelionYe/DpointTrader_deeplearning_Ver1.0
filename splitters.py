@@ -1,33 +1,8 @@
-# splitters.py
-"""
-Panel 数据切分器模块
-==================
-
-本模块提供基于日期的时序数据切分功能，支持多股票 panel 数据。
-
-主要功能:
-    - walkforward_splits_by_date: 标准 Walk-Forward 日期切分
-    - walkforward_splits_with_embargo: 带 embargo gap 的切分
-    - final_holdout_split: 最终 holdout 集切分
-    - recommend_n_folds: 根据数据量推荐折数
-
-与单股票切分的区别:
-    - 切分对象是日期，不是样本行
-    - 返回 split spec（日期范围），不是 X/y 切分
-    - 训练阶段再根据 split spec 过滤 panel 数据
-
-使用示例:
-    >>> from splitters import walkforward_splits_by_date
-    >>> splits = walkforward_splits_by_date(panel_df, n_folds=4)
-    >>> for train_dates, val_dates in splits:
-    ...     train_df = panel_df[panel_df["date"].isin(train_dates)]
-    ...     val_df = panel_df[panel_df["date"].isin(val_dates)]
-"""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import List, Tuple
 
 import pandas as pd
 
@@ -36,16 +11,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SplitSpec:
-    """切分规格说明。
-
-    Attributes:
-        train_start: 训练集开始日期
-        train_end: 训练集结束日期
-        val_start: 验证集开始日期
-        val_end: 验证集结束日期
-        embargo_days: embargo 天数（如果有）
-        fold_id: 折 ID
-    """
     train_start: pd.Timestamp
     train_end: pd.Timestamp
     val_start: pd.Timestamp
@@ -53,42 +18,65 @@ class SplitSpec:
     embargo_days: int = 0
     fold_id: int = 0
 
-    def to_date_sets(
-        self,
-        unique_dates: List[pd.Timestamp],
-    ) -> Tuple[List[pd.Timestamp], List[pd.Timestamp]]:
-        """
-        将规格转换成实际日期列表。
-
-        Args:
-            unique_dates: 所有唯一日期的列表
-
-        Returns:
-            Tuple[train_dates, val_dates]
-        """
-        train_dates = [
-            d for d in unique_dates
-            if self.train_start <= d <= self.train_end
-        ]
-        val_dates = [
-            d for d in unique_dates
-            if self.val_start <= d <= self.val_end
-        ]
+    def to_date_sets(self, unique_dates: List[pd.Timestamp]) -> Tuple[List[pd.Timestamp], List[pd.Timestamp]]:
+        train_dates = [d for d in unique_dates if self.train_start <= d <= self.train_end]
+        val_dates = [d for d in unique_dates if self.val_start <= d <= self.val_end]
         return train_dates, val_dates
 
 
 @dataclass
 class SplitResult:
-    """切分结果。
-
-    Attributes:
-        train_df: 训练集 DataFrame
-        val_df: 验证集 DataFrame
-        spec: 切分规格
-    """
     train_df: pd.DataFrame
     val_df: pd.DataFrame
     spec: SplitSpec
+
+
+def _unique_dates(panel_df: pd.DataFrame, date_col: str) -> List[pd.Timestamp]:
+    return sorted(pd.to_datetime(panel_df[date_col].unique()))
+
+
+def _rows_for_dates(panel_df: pd.DataFrame, dates: List[pd.Timestamp], *, date_col: str) -> int:
+    if not dates:
+        return 0
+    return int(panel_df[panel_df[date_col].isin(dates)].shape[0])
+
+
+def _tickers_for_dates(panel_df: pd.DataFrame, dates: List[pd.Timestamp], *, date_col: str, ticker_col: str) -> int:
+    if not dates:
+        return 0
+    return int(panel_df.loc[panel_df[date_col].isin(dates), ticker_col].nunique())
+
+
+def _log_split_summary(
+    name: str,
+    panel_df: pd.DataFrame,
+    splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]],
+    *,
+    date_col: str,
+    ticker_col: str,
+    embargo_days: int = 0,
+) -> None:
+    if not splits:
+        logger.warning("%s: no valid folds generated from %d dates", name, len(_unique_dates(panel_df, date_col)))
+        return
+    logger.info(
+        "%s: %d folds generated from %d dates (embargo=%d)",
+        name,
+        len(splits),
+        len(_unique_dates(panel_df, date_col)),
+        embargo_days,
+    )
+    for idx, (train_dates, val_dates) in enumerate(splits, start=1):
+        logger.info(
+            "  Fold %d: train=%d dates/%d rows/%d tickers, val=%d dates/%d rows/%d tickers",
+            idx,
+            len(train_dates),
+            _rows_for_dates(panel_df, train_dates, date_col=date_col),
+            _tickers_for_dates(panel_df, train_dates, date_col=date_col, ticker_col=ticker_col),
+            len(val_dates),
+            _rows_for_dates(panel_df, val_dates, date_col=date_col),
+            _tickers_for_dates(panel_df, val_dates, date_col=date_col, ticker_col=ticker_col),
+        )
 
 
 def walkforward_splits_by_date(
@@ -100,87 +88,45 @@ def walkforward_splits_by_date(
     train_start_ratio: float = 0.5,
     min_rows: int = 50,
 ) -> List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]:
-    """
-    生成 walk-forward 日期切分。
-
-    这是多股票 panel 版本的切分器，返回日期列表而不是 X/y 切分。
-
-    参数说明：
-        n_folds          : 验证折数，默认 4
-        train_start_ratio: 第一折训练集占全部数据的比例，默认 0.5
-        min_rows         : 每折的最小行数约束，不足时跳过该折
-
-    切分示意（n_folds=4, train_start_ratio=0.5）：
-        折 1: train=[0%~50%]   val=[50%~62.5%]
-        折 2: train=[0%~62%]   val=[62.5%~75%]
-        折 3: train=[0%~75%]   val=[75%~87.5%]
-        折 4: train=[0%~87%]   val=[87.5%~100%]
-
-    Args:
-        panel_df: panel DataFrame
-        date_col: 日期列名
-        ticker_col: ticker 列名
-        n_folds: 验证折数
-        train_start_ratio: 初始训练集比例
-        min_rows: 每折最小行数约束
-
-    Returns:
-        List[Tuple[train_dates, val_dates]]: 日期列表元组的列表
-    """
-    # 获取唯一日期
-    unique_dates = sorted(panel_df[date_col].unique())
+    unique_dates = _unique_dates(panel_df, date_col)
     n_dates = len(unique_dates)
-
     if n_dates < 2:
-        logger.warning("Not enough unique dates for walk-forward splits")
+        logger.warning("walkforward_splits_by_date: not enough unique dates")
         return []
 
-    # 计算切分点
     cuts = [
         train_start_ratio + (1.0 - train_start_ratio) * i / n_folds
         for i in range(n_folds + 1)
     ]
 
-    splits = []
-    for k in range(len(cuts) - 1):
-        train_end_idx = int(n_dates * cuts[k])
-        val_end_idx = int(n_dates * cuts[k + 1])
+    splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]] = []
+    for fold_idx in range(len(cuts) - 1):
+        train_end_idx = int(n_dates * cuts[fold_idx])
+        val_end_idx = int(n_dates * cuts[fold_idx + 1])
 
         train_dates = unique_dates[:train_end_idx]
         val_dates = unique_dates[train_end_idx:val_end_idx]
-
-        # 计算行数约束（考虑多股票）
-        n_tickers = panel_df[ticker_col].nunique()
-        train_rows = len(train_dates) * n_tickers
-        val_rows = len(val_dates) * n_tickers
+        train_rows = _rows_for_dates(panel_df, train_dates, date_col=date_col)
+        val_rows = _rows_for_dates(panel_df, val_dates, date_col=date_col)
 
         if train_rows < min_rows or val_rows < min_rows:
             logger.warning(
-                "walkforward_splits_by_date: fold %d skipped "
-                "(train_rows=%d, val_rows=%d, min_rows=%d)",
-                k + 1, train_rows, val_rows, min_rows
+                "walkforward_splits_by_date: fold %d skipped (train_rows=%d, val_rows=%d, min_rows=%d)",
+                fold_idx + 1,
+                train_rows,
+                val_rows,
+                min_rows,
             )
             continue
-
         splits.append((train_dates, val_dates))
 
-    if not splits:
-        logger.warning(
-            "walkforward_splits_by_date: ALL %d folds skipped. "
-            "Total dates=%d, train_start_ratio=%.2f, min_rows=%d",
-            n_folds, n_dates, train_start_ratio, min_rows
-        )
-    else:
-        logger.info(
-            "walkforward_splits_by_date: %d folds generated from %d dates",
-            len(splits), n_dates
-        )
-        for k, (train_dates, val_dates) in enumerate(splits):
-            logger.info(
-                "  Fold %d: train=%d dates, val=%d dates",
-                k + 1, len(train_dates), len(val_dates)
-            )
-
+    _log_split_summary(
+        "walkforward_splits_by_date",
+        panel_df,
+        splits,
+        date_col=date_col,
+        ticker_col=ticker_col,
+    )
     return splits
 
 
@@ -194,86 +140,54 @@ def walkforward_splits_with_embargo(
     min_rows: int = 60,
     embargo_days: int = 5,
 ) -> List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]:
-    """
-    带 embargo gap 的 Walk-Forward 切分。
-
-    在训练集和验证集之间留出 gap，防止滚动窗口特征导致的信息泄露。
-
-    Args:
-        panel_df: panel DataFrame
-        date_col: 日期列名
-        ticker_col: ticker 列名
-        n_folds: 验证折数
-        train_start_ratio: 初始训练集比例
-        min_rows: 最小行数约束
-        embargo_days: embargo 天数
-
-    Returns:
-        List[Tuple[train_dates, val_dates]]
-    """
-    # 获取唯一日期
-    unique_dates = sorted(panel_df[date_col].unique())
+    unique_dates = _unique_dates(panel_df, date_col)
     n_dates = len(unique_dates)
-
     if n_dates < embargo_days + 2:
-        logger.warning("Not enough dates for embargo=%d", embargo_days)
+        logger.warning("walkforward_splits_with_embargo: not enough dates for embargo=%d", embargo_days)
         return []
 
-    # 计算切分点
     cuts = [
         train_start_ratio + (1.0 - train_start_ratio) * i / n_folds
         for i in range(n_folds + 1)
     ]
 
-    splits = []
-    for k in range(len(cuts) - 1):
-        train_end_idx = int(n_dates * cuts[k])
-        val_end_idx = int(n_dates * cuts[k + 1])
-
-        # 应用 embargo：验证集向后推移
+    splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]] = []
+    for fold_idx in range(len(cuts) - 1):
+        train_end_idx = int(n_dates * cuts[fold_idx])
+        val_end_idx = int(n_dates * cuts[fold_idx + 1])
         val_start_idx = train_end_idx + embargo_days
-
         if val_start_idx >= val_end_idx:
             logger.warning(
-                "walkforward_splits_with_embargo: fold %d skipped (embargo=%d)",
-                k + 1, embargo_days
+                "walkforward_splits_with_embargo: fold %d skipped due to embargo_days=%d",
+                fold_idx + 1,
+                embargo_days,
             )
             continue
 
         train_dates = unique_dates[:train_end_idx]
         val_dates = unique_dates[val_start_idx:val_end_idx]
-
-        # 行数约束
-        n_tickers = panel_df[ticker_col].nunique()
-        train_rows = len(train_dates) * n_tickers
-        val_rows = len(val_dates) * n_tickers
+        train_rows = _rows_for_dates(panel_df, train_dates, date_col=date_col)
+        val_rows = _rows_for_dates(panel_df, val_dates, date_col=date_col)
 
         if train_rows < min_rows or val_rows < min_rows:
             logger.warning(
-                "walkforward_splits_with_embargo: fold %d skipped "
-                "(train_rows=%d, val_rows=%d)",
-                k + 1, train_rows, val_rows
+                "walkforward_splits_with_embargo: fold %d skipped (train_rows=%d, val_rows=%d, min_rows=%d)",
+                fold_idx + 1,
+                train_rows,
+                val_rows,
+                min_rows,
             )
             continue
-
         splits.append((train_dates, val_dates))
 
-    if not splits:
-        logger.warning(
-            "walkforward_splits_with_embargo: ALL %d folds skipped",
-            n_folds
-        )
-    else:
-        logger.info(
-            "walkforward_splits_with_embargo: %d folds generated from %d dates (embargo=%d)",
-            len(splits), n_dates, embargo_days
-        )
-        for k, (train_dates, val_dates) in enumerate(splits):
-            logger.info(
-                "  Fold %d: train=%d dates, val=%d dates",
-                k + 1, len(train_dates), len(val_dates)
-            )
-
+    _log_split_summary(
+        "walkforward_splits_with_embargo",
+        panel_df,
+        splits,
+        date_col=date_col,
+        ticker_col=ticker_col,
+        embargo_days=embargo_days,
+    )
     return splits
 
 
@@ -287,101 +201,90 @@ def nested_walkforward_splits_by_date(
     train_start_ratio: float = 0.5,
     min_rows: int = 60,
     embargo_days: int = 5,
-) -> List[Tuple[
-    List[pd.Timestamp],  # outer_train_dates
-    List[pd.Timestamp],  # outer_val_dates
-    List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]],  # inner_splits
-]]:
-    """
-    嵌套 Walk-Forward 切分（日期版本）。
-
-    外层：标准 walk-forward split
-    内层：在外层训练集上再做 expanding-window walk-forward
-
-    Args:
-        panel_df: panel DataFrame
-        date_col: 日期列名
-        ticker_col: ticker 列名
-        n_outer_folds: 外层折数
-        n_inner_folds: 内层折数
-        train_start_ratio: 外层初始训练集比例
-        min_rows: 最小行数约束
-        embargo_days: embargo 天数
-
-    Returns:
-        List[Tuple[outer_train_dates, outer_val_dates, inner_splits]]
-    """
-    unique_dates = sorted(panel_df[date_col].unique())
+    inner_use_embargo: bool = True,
+) -> List[Tuple[List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]]]:
+    unique_dates = _unique_dates(panel_df, date_col)
     n_dates = len(unique_dates)
-
     cuts = [
         train_start_ratio + (1.0 - train_start_ratio) * i / n_outer_folds
         for i in range(n_outer_folds + 1)
     ]
 
-    splits = []
-    for k in range(len(cuts) - 1):
-        outer_train_end_idx = int(n_dates * cuts[k])
-        outer_val_end_idx = int(n_dates * cuts[k + 1])
-
-        # 应用 embargo
+    splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]]] = []
+    for fold_idx in range(len(cuts) - 1):
+        outer_train_end_idx = int(n_dates * cuts[fold_idx])
+        outer_val_end_idx = int(n_dates * cuts[fold_idx + 1])
         outer_val_start_idx = outer_train_end_idx + embargo_days
         if outer_val_start_idx >= outer_val_end_idx:
             logger.warning(
                 "nested_walkforward: fold %d skipped due to embargo_days=%d",
-                k + 1, embargo_days
+                fold_idx + 1,
+                embargo_days,
             )
             continue
 
         outer_train_dates = unique_dates[:outer_train_end_idx]
         outer_val_dates = unique_dates[outer_val_start_idx:outer_val_end_idx]
-
-        # 行数约束
-        n_tickers = panel_df[ticker_col].nunique()
-        outer_train_rows = len(outer_train_dates) * n_tickers
-        outer_val_rows = len(outer_val_dates) * n_tickers
-
+        outer_train_rows = _rows_for_dates(panel_df, outer_train_dates, date_col=date_col)
+        outer_val_rows = _rows_for_dates(panel_df, outer_val_dates, date_col=date_col)
         if outer_train_rows < min_rows or outer_val_rows < min_rows:
             logger.warning(
-                "nested_walkforward: fold %d skipped (train_rows=%d, val_rows=%d)",
-                k + 1, outer_train_rows, outer_val_rows
+                "nested_walkforward: fold %d skipped (train_rows=%d, val_rows=%d, min_rows=%d)",
+                fold_idx + 1,
+                outer_train_rows,
+                outer_val_rows,
+                min_rows,
             )
             continue
 
-        # 内层 walk-forward：在外层训练集日期上切分
-        # 复用标准 walk-forward 逻辑
-        inner_panel = panel_df[panel_df[date_col].isin(outer_train_dates)]
-        inner_splits = walkforward_splits_by_date(
-            inner_panel,
-            date_col=date_col,
-            ticker_col=ticker_col,
-            n_folds=n_inner_folds,
-            train_start_ratio=train_start_ratio,
-            min_rows=min_rows,
-        )
-
+        inner_panel = panel_df[panel_df[date_col].isin(outer_train_dates)].copy()
+        if inner_use_embargo:
+            inner_splits = walkforward_splits_with_embargo(
+                inner_panel,
+                date_col=date_col,
+                ticker_col=ticker_col,
+                n_folds=n_inner_folds,
+                train_start_ratio=train_start_ratio,
+                min_rows=min_rows,
+                embargo_days=embargo_days,
+            )
+        else:
+            inner_splits = walkforward_splits_by_date(
+                inner_panel,
+                date_col=date_col,
+                ticker_col=ticker_col,
+                n_folds=n_inner_folds,
+                train_start_ratio=train_start_ratio,
+                min_rows=min_rows,
+            )
         if not inner_splits:
-            logger.warning(
-                "nested_walkforward: fold %d skipped (no valid inner splits)",
-                k + 1
-            )
+            logger.warning("nested_walkforward: fold %d skipped (no valid inner splits)", fold_idx + 1)
             continue
-
         splits.append((outer_train_dates, outer_val_dates, inner_splits))
 
     if not splits:
-        logger.warning("nested_walkforward: ALL %d folds skipped", n_outer_folds)
-    else:
-        logger.info(
-            "nested_walkforward: %d outer folds generated from %d dates",
-            len(splits), n_dates
-        )
-        for k, (outer_train_dates, outer_val_dates, inner_splits) in enumerate(splits):
-            logger.info(
-                "  Outer Fold %d: outer_train=%d dates, outer_val=%d dates, inner_splits=%d",
-                k + 1, len(outer_train_dates), len(outer_val_dates), len(inner_splits)
-            )
+        logger.warning("nested_walkforward: no valid outer folds generated from %d dates", n_dates)
+        return []
 
+    logger.info(
+        "nested_walkforward: %d outer folds generated from %d dates (outer_embargo=%d, inner_embargo=%s)",
+        len(splits),
+        n_dates,
+        embargo_days,
+        "on" if inner_use_embargo else "off",
+    )
+    for idx, (outer_train_dates, outer_val_dates, inner_splits) in enumerate(splits, start=1):
+        logger.info(
+            "  Outer Fold %d: train=%d dates/%d rows/%d tickers, val=%d dates/%d rows/%d tickers, inner_splits=%d",
+            idx,
+            len(outer_train_dates),
+            _rows_for_dates(panel_df, outer_train_dates, date_col=date_col),
+            _tickers_for_dates(panel_df, outer_train_dates, date_col=date_col, ticker_col=ticker_col),
+            len(outer_val_dates),
+            _rows_for_dates(panel_df, outer_val_dates, date_col=date_col),
+            _tickers_for_dates(panel_df, outer_val_dates, date_col=date_col, ticker_col=ticker_col),
+            len(inner_splits),
+        )
     return splits
 
 
@@ -393,62 +296,38 @@ def final_holdout_split_by_date(
     holdout_ratio: float = 0.15,
     min_holdout_rows: int = 60,
     enforce_non_empty_search: bool = True,
+    gap_days: int = 0,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    从数据末尾切出 holdout 集（日期版本）。
-
-    三阶段验证流程：
-        1. Search OOS: walk-forward splits 在 search 数据上评估
-        2. Selection OOS: top-K 候选在 search 数据上重新验证
-        3. Final Holdout OOS: 最优配置在 holdout 集上做最终评估
-
-    Args:
-        panel_df: panel DataFrame
-        date_col: 日期列名
-        ticker_col: ticker列名
-        holdout_ratio: holdout 集比例
-        min_holdout_rows: holdout 集最小行数
-        enforce_non_empty_search: 是否强制search集非空
-
-    Returns:
-        Tuple[search_df, holdout_df]
-
-    Raises:
-        ValueError: 当 holdout_size < min_holdout_rows 时
-    """
-    unique_dates = sorted(panel_df[date_col].unique())
+    unique_dates = _unique_dates(panel_df, date_col)
     n_dates = len(unique_dates)
-    n_tickers = panel_df[ticker_col].nunique() if ticker_col in panel_df.columns else 1
-
     holdout_size = int(n_dates * holdout_ratio)
-    holdout_rows = holdout_size * n_tickers
-
-    if holdout_rows < min_holdout_rows:
-        raise ValueError(
-            f"holdout_rows={holdout_rows} < min_holdout_rows={min_holdout_rows}. "
-            f"Increase holdout_ratio or use more data."
-        )
-
     holdout_start_idx = n_dates - holdout_size
+    search_end_idx = max(0, holdout_start_idx - max(0, gap_days))
+
     holdout_dates = unique_dates[holdout_start_idx:]
-    search_dates = unique_dates[:holdout_start_idx]
-
-    if enforce_non_empty_search and len(search_dates) == 0:
-        raise ValueError(
-            "Search set is empty after holdout split. "
-            "Reduce holdout_ratio or use more data."
-        )
-
-    search_df = panel_df[panel_df[date_col].isin(search_dates)].copy()
+    search_dates = unique_dates[:search_end_idx]
     holdout_df = panel_df[panel_df[date_col].isin(holdout_dates)].copy()
+    search_df = panel_df[panel_df[date_col].isin(search_dates)].copy()
+
+    if len(holdout_df) < min_holdout_rows:
+        raise ValueError(
+            f"holdout_rows={len(holdout_df)} < min_holdout_rows={min_holdout_rows}. "
+            "Increase holdout_ratio or use more data."
+        )
+    if enforce_non_empty_search and search_df.empty:
+        raise ValueError(
+            "Search set is empty after holdout split. Reduce holdout_ratio/gap_days or use more data."
+        )
 
     logger.info(
-        "Final Holdout Split: search=%d rows (%d dates), "
-        "holdout=%d rows (%d dates, %.1f%%)",
-        len(search_df), len(search_dates),
-        len(holdout_df), len(holdout_dates), holdout_ratio * 100
+        "Final Holdout Split: search=%d rows (%d dates), gap=%d dates, holdout=%d rows (%d dates, %.1f%%)",
+        len(search_df),
+        len(search_dates),
+        max(0, holdout_start_idx - search_end_idx),
+        len(holdout_df),
+        len(holdout_dates),
+        holdout_ratio * 100.0,
     )
-
     return search_df, holdout_df
 
 
@@ -462,48 +341,18 @@ def recommend_n_folds(
     min_folds: int = 2,
     max_folds: int = 8,
 ) -> int:
-    """
-    根据数据量自适应推算合理的 walk-forward 折数（日期版本）。
-
-    推算原则：
-        在满足以下三个约束的前提下，选取尽可能大的折数：
-            ① 每折验证期行数 ≥ min_rows
-            ② 每折期望交易次数 ≈ target_trades_per_fold
-            ③ 折数在 [min_folds, max_folds] 范围内
-
-    Args:
-        n_dates: 唯一日期数量
-        n_tickers: 股票数量
-        train_start_ratio: 初始训练集比例
-        target_trades_per_fold: 每折目标交易次数
-        assumed_trade_freq: 假设的交易频率
-        min_rows: 每折最小行数
-        min_folds: 最少折数
-        max_folds: 最多折数
-
-    Returns:
-        int: 推荐的折数
-    """
     val_pool = n_dates * (1.0 - train_start_ratio)
-
     best_n = min_folds
     for n in range(max_folds, min_folds - 1, -1):
         val_dates_per_fold = val_pool / n
         val_rows_per_fold = val_dates_per_fold * n_tickers
-
-        # 约束①：验证折行数 ≥ min_rows
         if val_rows_per_fold < min_rows:
             continue
-
-        # 约束②：期望交易次数 ≥ target_trades_per_fold
         expected_trades = val_rows_per_fold * assumed_trade_freq
         if expected_trades < target_trades_per_fold:
             continue
-
-        # 满足所有约束
         best_n = n
         break
-
     return max(min_folds, min(max_folds, best_n))
 
 
@@ -514,18 +363,6 @@ def filter_panel_by_dates(
     *,
     date_col: str = "date",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    根据日期列表过滤 panel 数据。
-
-    Args:
-        panel_df: panel DataFrame
-        train_dates: 训练集日期列表
-        val_dates: 验证集日期列表
-        date_col: 日期列名
-
-    Returns:
-        Tuple[train_df, val_df]
-    """
     train_df = panel_df[panel_df[date_col].isin(train_dates)].copy()
     val_df = panel_df[panel_df[date_col].isin(val_dates)].copy()
     return train_df, val_df
@@ -544,31 +381,6 @@ def build_date_splits(
     min_rows: int = 60,
     embargo_days: int = 5,
 ) -> List:
-    """
-    统一的日期切分包装函数。
-    
-    根据split_mode选择不同的切分策略。
-    
-    Args:
-        panel_df: panel DataFrame
-        split_mode: 切分模式 ("wf", "wf_embargo", "nested_wf")
-        date_col: 日期列名
-        ticker_col: ticker列名
-        n_folds: 折数（用于wf/wf_embargo）
-        n_outer_folds: 外层折数（用于nested_wf）
-        n_inner_folds: 内层折数（用于nested_wf）
-        train_start_ratio: 初始训练集比例
-        min_rows: 最小行数约束
-        embargo_days: embargo天数（用于wf_embargo）
-    
-    Returns:
-        List: 切分结果
-            - wf/wf_embargo: List[Tuple[List[Timestamp], List[Timestamp]]]
-            - nested_wf: List[Tuple[List[Timestamp], List[Timestamp], List[Tuple[...]]]]
-    
-    Raises:
-        ValueError: 如果split_mode无效
-    """
     if split_mode == "wf":
         return walkforward_splits_by_date(
             panel_df,
@@ -578,7 +390,7 @@ def build_date_splits(
             train_start_ratio=train_start_ratio,
             min_rows=min_rows,
         )
-    elif split_mode == "wf_embargo":
+    if split_mode == "wf_embargo":
         return walkforward_splits_with_embargo(
             panel_df,
             date_col=date_col,
@@ -588,7 +400,7 @@ def build_date_splits(
             min_rows=min_rows,
             embargo_days=embargo_days,
         )
-    elif split_mode == "nested_wf":
+    if split_mode == "nested_wf":
         return nested_walkforward_splits_by_date(
             panel_df,
             date_col=date_col,
@@ -598,14 +410,11 @@ def build_date_splits(
             train_start_ratio=train_start_ratio,
             min_rows=min_rows,
             embargo_days=embargo_days,
+            inner_use_embargo=True,
         )
-    else:
-        raise ValueError(f"Invalid split_mode: {split_mode}. Must be one of ['wf', 'wf_embargo', 'nested_wf']")
+    raise ValueError(f"Invalid split_mode: {split_mode}. Must be one of ['wf', 'wf_embargo', 'nested_wf']")
 
 
-# =========================================================
-# 公开 API 导出
-# =========================================================
 __all__ = [
     "SplitSpec",
     "SplitResult",
