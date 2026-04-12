@@ -3,7 +3,11 @@ import pandas as pd
 import pytest
 
 from feature_dpoint import build_features_and_labels_panel
-from splitters import final_holdout_split_by_date, walkforward_splits_by_date, walkforward_splits_with_embargo
+from splitters import (
+    final_holdout_split_by_date,
+    walkforward_splits_by_date,
+    walkforward_splits_with_embargo,
+)
 
 
 @pytest.fixture

@@ -6,7 +6,14 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, log_loss, mean_absolute_error, mean_squared_error, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    log_loss,
+    mean_absolute_error,
+    mean_squared_error,
+    roc_auc_score,
+)
 from sklearn.preprocessing import StandardScaler
 
 from models import (
@@ -21,7 +28,12 @@ from models import (
     train_pytorch_model,
 )
 from ranking_metrics import RankingMetrics, compute_all_ranking_metrics
-from sequence_builder import PanelSequenceStore, SequenceDatasetBundle, build_panel_sequence_store, build_panel_sequences
+from sequence_builder import (
+    PanelSequenceStore,
+    SequenceDatasetBundle,
+    build_panel_sequence_store,
+    build_panel_sequences,
+)
 from tasks import infer_task_type, multiclass_probabilities_to_score
 
 logger = logging.getLogger(__name__)
@@ -310,12 +322,12 @@ def train_panel_model(
             **model_params,
         }
         model: Any = train_pytorch_model(store, None, torch_config, device=device, X_val=early_val_store, y_val=None)
-        setattr(model, "_seq_len", store.seq_len)
-        setattr(model, "_feature_names", list(store.feature_names))
-        setattr(model, "_is_panel_sequence_model", True)
-        setattr(model, "_device_preference", str(config.get("device", "auto")))
-        setattr(model, "_task_type", task_type)
-        setattr(model, "_n_classes", config.get("n_classes"))
+        model._seq_len = store.seq_len
+        model._feature_names = list(store.feature_names)
+        model._is_panel_sequence_model = True
+        model._device_preference = str(config.get("device", "auto"))
+        model._task_type = task_type
+        model._n_classes = config.get("n_classes")
         model_info = {
             "model_type": model_type,
             "feature_names": list(store.feature_names),
@@ -361,11 +373,11 @@ def train_panel_model(
             **model_params,
         }
         torch_model: Any = train_pytorch_model(X_train_df, y_fit, torch_config, device=device, X_val=X_val_df, y_val=y_early_val)
-        setattr(torch_model, "_device_preference", str(config.get("device", "auto")))
-        setattr(torch_model, "_feature_names", list(feature_cols))
-        setattr(torch_model, "_preprocessor", preprocessor)
-        setattr(torch_model, "_task_type", task_type)
-        setattr(torch_model, "_n_classes", config.get("n_classes"))
+        torch_model._device_preference = str(config.get("device", "auto"))
+        torch_model._feature_names = list(feature_cols)
+        torch_model._preprocessor = preprocessor
+        torch_model._task_type = task_type
+        torch_model._n_classes = config.get("n_classes")
         model = torch_model
     else:
         candidate = {"model_config": {"model_type": model_type, "task_type": task_type, "params": model_params}}
@@ -373,9 +385,9 @@ def train_panel_model(
         if not hasattr(model, "fit"):
             raise ValueError(f"Model {model_type} does not have fit method")
         model.fit(X_train_df.to_numpy(), y_fit.to_numpy())
-        setattr(model, "_task_type", task_type)
-        setattr(model, "_feature_names", list(feature_cols))
-        setattr(model, "_n_classes", config.get("n_classes"))
+        model._task_type = task_type
+        model._feature_names = list(feature_cols)
+        model._n_classes = config.get("n_classes")
 
     model_info = {
         "model_type": model_type,

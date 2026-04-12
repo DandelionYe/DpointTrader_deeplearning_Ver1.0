@@ -265,7 +265,7 @@ def generate_html_report(
 """
 
     # 页脚
-    html += f"""
+    html += """
         <div class="footer">
             <p>报告由 Dpoint Trader 生成 | 数据契约版本：1.0.0</p>
         </div>

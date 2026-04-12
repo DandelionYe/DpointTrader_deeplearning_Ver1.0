@@ -10,18 +10,19 @@
 """
 import os
 import sys
-import pytest
+
 import numpy as np
 import pandas as pd
+import pytest
 
 # 添加父目录到路径以便导入
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from cross_sectional_features import (
+    add_cross_sectional_features,
+    cross_sectional_percentile,
     cross_sectional_rank,
     cross_sectional_zscore,
-    cross_sectional_percentile,
-    add_cross_sectional_features,
 )
 
 
@@ -37,7 +38,7 @@ class TestCrossSectionalRank:
         })
 
         ranks = cross_sectional_rank(df, value_col="value", date_col="date")
-        
+
         # 验证返回的是 Series 且有正确的长度
         assert isinstance(ranks, pd.Series)
         assert len(ranks) == 3
@@ -51,7 +52,7 @@ class TestCrossSectionalRank:
         })
 
         ranks = cross_sectional_rank(df, value_col="value", date_col="date")
-        
+
         # 验证返回的是 Series 且有正确的长度
         assert isinstance(ranks, pd.Series)
         assert len(ranks) == 4
@@ -71,7 +72,7 @@ class TestCrossSectionalZscore:
         })
 
         zscores = cross_sectional_zscore(df, value_col="value", date_col="date")
-        
+
         # zscores 是 Series
         assert isinstance(zscores, pd.Series)
         assert len(zscores) == n
@@ -96,7 +97,7 @@ class TestCrossSectionalZscore:
             clip_outliers=True,
             clip_std=3.0,
         )
-        
+
         # 异常值应该被截断
         assert float(zscores.max()) <= 3.0
         assert float(zscores.min()) >= -3.0
@@ -115,7 +116,7 @@ class TestCrossSectionalPercentile:
         })
 
         percentiles = cross_sectional_percentile(df, value_col="value", date_col="date")
-        
+
         # percentiles 是 Series
         assert isinstance(percentiles, pd.Series)
         assert len(percentiles) == n

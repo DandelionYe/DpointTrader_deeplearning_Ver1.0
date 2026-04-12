@@ -10,8 +10,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-import os
-from datetime import datetime, timedelta
 
 
 @pytest.fixture
@@ -22,18 +20,18 @@ def minimal_basket_data():
     np.random.seed(42)
     n = 100
     dates = pd.date_range(start="2020-01-01", periods=n, freq="B")
-    
+
     frames = []
     for ticker in ["TEST1", "TEST2", "TEST3"]:
         base_price = 10.0 + np.random.uniform(0, 5)
-        
+
         returns = np.random.normal(0.0005, 0.02, n)
         close_prices = base_price * np.exp(np.cumsum(returns))
         open_prices = close_prices * (1 + np.random.uniform(-0.01, 0.01, n))
         high_prices = np.maximum(open_prices, close_prices) * (1 + np.abs(np.random.uniform(0, 0.02, n)))
         low_prices = np.minimum(open_prices, close_prices) * (1 - np.abs(np.random.uniform(0, 0.02, n)))
         volumes = np.random.uniform(1_000_000, 10_000_000, n)
-        
+
         df = pd.DataFrame({
             "date": dates,
             "ticker": ticker,
@@ -44,7 +42,7 @@ def minimal_basket_data():
             "volume": volumes,
         })
         frames.append(df)
-    
+
     return pd.concat(frames, ignore_index=True)
 
 
@@ -101,12 +99,12 @@ def temp_basket_dir(tmp_path):
     """
     basket_dir = tmp_path / "basket_test"
     basket_dir.mkdir()
-    
+
     # Create sample CSV files
     np.random.seed(42)
     n = 50
     dates = pd.date_range(start="2020-01-01", periods=n, freq="B")
-    
+
     for ticker in ["600001", "600002", "600003"]:
         base_price = 10.0 + np.random.uniform(0, 5)
         returns = np.random.normal(0.0005, 0.02, n)
@@ -115,7 +113,7 @@ def temp_basket_dir(tmp_path):
         high_prices = np.maximum(open_prices, close_prices) * (1 + np.abs(np.random.uniform(0, 0.02, n)))
         low_prices = np.minimum(open_prices, close_prices) * (1 - np.abs(np.random.uniform(0, 0.02, n)))
         volumes = np.random.uniform(1_000_000, 10_000_000, n)
-        
+
         df = pd.DataFrame({
             "Date": dates,
             "Open (CNY qfq)": open_prices,
@@ -125,5 +123,5 @@ def temp_basket_dir(tmp_path):
             "Volume (shares)": volumes,
         })
         df.to_csv(basket_dir / f"{ticker}.csv", index=False)
-    
+
     return str(basket_dir)

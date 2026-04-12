@@ -12,7 +12,12 @@ import pandas as pd
 
 from backtester_engine import backtest_from_scores, prepare_scores_for_backtest
 from models import save_trained_model
-from panel_trainer import align_scores_with_labels, evaluate_scores_df, predict_panel, train_panel_model
+from panel_trainer import (
+    align_scores_with_labels,
+    evaluate_scores_df,
+    predict_panel,
+    train_panel_model,
+)
 from portfolio_builder import PortfolioConfig
 from search_engine import run_search
 from utils import create_manifest, create_snapshot_dir
@@ -154,7 +159,12 @@ class RollingRetrainer:
         return eval_X, eval_y, eval_label_meta
 
     def run(self, panel_df: pd.DataFrame, args: argparse.Namespace) -> List[SnapshotManifest]:
-        from main_basket import build_feature_config, build_model_config, build_split_plan, resolve_label_mode_alias
+        from main_basket import (
+            build_feature_config,
+            build_model_config,
+            build_split_plan,
+            resolve_label_mode_alias,
+        )
 
         retrain_dates = self.iter_retrain_dates(panel_df)
         if not retrain_dates:

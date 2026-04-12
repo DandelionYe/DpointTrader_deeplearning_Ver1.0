@@ -11,7 +11,11 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
 
-from backtester_engine import backtest_from_scores, compute_buy_and_hold_benchmark, prepare_scores_for_backtest
+from backtester_engine import (
+    backtest_from_scores,
+    compute_buy_and_hold_benchmark,
+    prepare_scores_for_backtest,
+)
 from basket_loader import BasketMeta, BasketReport, load_basket_folder
 from constants import (
     DATA_CONTRACT_VERSION,
@@ -24,13 +28,22 @@ from constants import (
     DEFAULT_TOP_K,
     DEFAULT_WEIGHTING,
 )
-from experiment_contract import build_run_contract, contract_to_dict, validate_continue_compatibility
 from excel_reporter import save_to_excel
+from experiment_contract import (
+    build_run_contract,
+    contract_to_dict,
+    validate_continue_compatibility,
+)
 from feature_dpoint import build_features_and_labels_panel
 from html_reporter import generate_html_report
 from models import get_torch_runtime_info, load_saved_model, save_trained_model
 from panel_builder import validate_panel
-from panel_trainer import align_scores_with_labels, evaluate_scores_df, predict_panel, train_panel_model
+from panel_trainer import (
+    align_scores_with_labels,
+    evaluate_scores_df,
+    predict_panel,
+    train_panel_model,
+)
 from portfolio_builder import PortfolioConfig
 from ranking_metrics import compute_all_ranking_metrics
 from rolling_retrainer import RollingConfig, RollingRetrainer

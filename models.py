@@ -1,27 +1,24 @@
 from __future__ import annotations
 
-import logging
-import math
 import gc
 import json
+import logging
+import math
 import os
 from contextlib import contextmanager
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from sequence_builder import PanelSequenceStore
 from tasks import get_output_dim as task_output_dim
-from tasks import multiclass_class_values
-from tasks import multiclass_probabilities_to_score
-from tasks import resolve_loss_spec
+from tasks import multiclass_class_values, multiclass_probabilities_to_score, resolve_loss_spec
 
 logger = logging.getLogger(__name__)
 

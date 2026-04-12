@@ -16,7 +16,11 @@ from basket_loader import (
     extract_ticker_from_filename,
     load_basket_folder,
 )
-from csv_loader import SingleStockReport, load_single_csv, standardize_columns, validate_csv_structure
+from csv_loader import (
+    load_single_csv,
+    standardize_columns,
+    validate_csv_structure,
+)
 
 
 @pytest.fixture

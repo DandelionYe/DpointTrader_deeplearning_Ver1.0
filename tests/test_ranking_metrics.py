@@ -10,19 +10,20 @@
 """
 import os
 import sys
-import pytest
+
 import numpy as np
 import pandas as pd
+import pytest
 
 # 添加父目录到路径以便导入
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from ranking_metrics import (
+    compute_all_ranking_metrics,
     compute_ic,
+    compute_layered_returns,
     compute_rank_ic,
     compute_topk_return,
-    compute_layered_returns,
-    compute_all_ranking_metrics,
 )
 
 

@@ -6,7 +6,6 @@ import os
 import random
 import subprocess
 import sys
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np

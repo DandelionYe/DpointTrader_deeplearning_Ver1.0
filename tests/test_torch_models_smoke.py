@@ -3,32 +3,32 @@
 """
 import os
 
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
 
-from models import TORCH_AVAILABLE, TORCH_IMPORT_ERROR
+from models import TORCH_AVAILABLE
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
 class TestTorchModelsSmoke:
     """测试Torch模型基本路径"""
-    
+
     @pytest.fixture
     def tiny_tabular_data(self):
         """创建小型tabular数据"""
         np.random.seed(42)
         n_samples = 100
         n_features = 10
-        
+
         X = pd.DataFrame(
             np.random.randn(n_samples, n_features),
             columns=[f"feature_{i}" for i in range(n_features)]
         )
         y = pd.Series((np.random.randn(n_samples) > 0).astype(float))
-        
+
         return X, y
-    
+
     @pytest.fixture
     def tiny_sequence_data(self):
         """创建小型序列数据"""
@@ -36,11 +36,11 @@ class TestTorchModelsSmoke:
         n_samples = 50
         seq_len = 10
         n_features = 5
-        
+
         # 创建序列数据
         X_seq = np.random.randn(n_samples, seq_len, n_features).astype(np.float32)
         y_seq = (np.random.randn(n_samples) > 0).astype(np.float32)
-        
+
         return X_seq, y_seq, seq_len
 
     @pytest.fixture
@@ -48,14 +48,14 @@ class TestTorchModelsSmoke:
         path = os.path.join(".local", "tmp", "torch_smoke_artifacts")
         os.makedirs(path, exist_ok=True)
         yield path
-    
+
     def test_mlp_train_predict_smoke(self, tiny_tabular_data):
         """测试MLP训练+预测路径"""
-        from models import train_pytorch_model, predict_pytorch_model_tabular, resolve_torch_device
-        
+        from models import predict_pytorch_model_tabular, resolve_torch_device, train_pytorch_model
+
         X, y = tiny_tabular_data
         device = resolve_torch_device("cpu")
-        
+
         config = {
             "model_type": "mlp",
             "hidden_dims": [32, 16],
@@ -65,23 +65,23 @@ class TestTorchModelsSmoke:
             "epochs": 2,
             "batch_size": 32,
         }
-        
+
         # 训练
         model = train_pytorch_model(X, y, config, device=device)
-        
+
         # 预测
         scores = predict_pytorch_model_tabular(model, X, device)
-        
+
         assert len(scores) == len(X)
         assert not scores.isna().any()
-    
+
     def test_lstm_train_predict_smoke(self, tiny_tabular_data):
         """测试LSTM训练+预测路径"""
-        from models import train_pytorch_model, predict_pytorch_model, resolve_torch_device
-        
+        from models import predict_pytorch_model, resolve_torch_device, train_pytorch_model
+
         X, y = tiny_tabular_data
         device = resolve_torch_device("cpu")
-        
+
         config = {
             "model_type": "lstm",
             "hidden_dim": 32,
@@ -94,24 +94,24 @@ class TestTorchModelsSmoke:
             "seq_len": 10,
             "bidirectional": False,
         }
-        
+
         # 训练
         model = train_pytorch_model(X, y, config, device=device)
-        
+
         # 预测（使用向后兼容的predict_pytorch_model）
         scores = predict_pytorch_model(model, X, device, seq_len=10)
-        
+
         # 序列模型预测会少seq_len-1行
         assert len(scores) == len(X) - 10 + 1
         assert not scores.isna().any()
-    
+
     def test_gru_train_predict_smoke(self, tiny_tabular_data):
         """测试GRU训练+预测路径"""
-        from models import train_pytorch_model, predict_pytorch_model, resolve_torch_device
-        
+        from models import predict_pytorch_model, resolve_torch_device, train_pytorch_model
+
         X, y = tiny_tabular_data
         device = resolve_torch_device("cpu")
-        
+
         config = {
             "model_type": "gru",
             "hidden_dim": 32,
@@ -124,23 +124,23 @@ class TestTorchModelsSmoke:
             "seq_len": 10,
             "bidirectional": False,
         }
-        
+
         # 训练
         model = train_pytorch_model(X, y, config, device=device)
-        
+
         # 预测
         scores = predict_pytorch_model(model, X, device, seq_len=10)
-        
+
         assert len(scores) == len(X) - 10 + 1
         assert not scores.isna().any()
-    
+
     def test_cnn_train_predict_smoke(self, tiny_tabular_data):
         """测试CNN训练+预测路径"""
-        from models import train_pytorch_model, predict_pytorch_model, resolve_torch_device
-        
+        from models import predict_pytorch_model, resolve_torch_device, train_pytorch_model
+
         X, y = tiny_tabular_data
         device = resolve_torch_device("cpu")
-        
+
         config = {
             "model_type": "cnn",
             "num_filters": 32,
@@ -152,23 +152,23 @@ class TestTorchModelsSmoke:
             "batch_size": 32,
             "seq_len": 10,
         }
-        
+
         # 训练
         model = train_pytorch_model(X, y, config, device=device)
-        
+
         # 预测
         scores = predict_pytorch_model(model, X, device, seq_len=10)
-        
+
         assert len(scores) == len(X) - 10 + 1
         assert not scores.isna().any()
-    
+
     def test_transformer_train_predict_smoke(self, tiny_tabular_data):
         """测试Transformer训练+预测路径"""
-        from models import train_pytorch_model, predict_pytorch_model, resolve_torch_device
-        
+        from models import predict_pytorch_model, resolve_torch_device, train_pytorch_model
+
         X, y = tiny_tabular_data
         device = resolve_torch_device("cpu")
-        
+
         config = {
             "model_type": "transformer",
             "d_model": 32,
@@ -182,13 +182,13 @@ class TestTorchModelsSmoke:
             "batch_size": 32,
             "seq_len": 10,
         }
-        
+
         # 训练
         model = train_pytorch_model(X, y, config, device=device)
-        
+
         # 预测
         scores = predict_pytorch_model(model, X, device, seq_len=10)
-        
+
         assert len(scores) == len(X) - 10 + 1
         assert not scores.isna().any()
 
@@ -324,8 +324,8 @@ class TestTorchModelsSmoke:
         assert models._is_cuda_oom_error(RuntimeError("unrelated runtime error")) is False
 
     def test_torch_models_save_as_state_dict_artifact(self, tiny_tabular_data, local_tmpdir):
-        from panel_trainer import train_panel_model
         from models import load_saved_model, save_trained_model
+        from panel_trainer import train_panel_model
 
         X, y = tiny_tabular_data
         panel_X = X.copy()

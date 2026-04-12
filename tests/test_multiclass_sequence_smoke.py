@@ -3,7 +3,12 @@ import pandas as pd
 import pytest
 
 from models import TORCH_AVAILABLE
-from panel_trainer import align_scores_with_labels, evaluate_scores_df, predict_panel, train_panel_model
+from panel_trainer import (
+    align_scores_with_labels,
+    evaluate_scores_df,
+    predict_panel,
+    train_panel_model,
+)
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")

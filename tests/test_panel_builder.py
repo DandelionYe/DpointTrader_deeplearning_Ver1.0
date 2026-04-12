@@ -10,22 +10,22 @@ Panel 构建器测试模块
 """
 import os
 import sys
-import pytest
+
 import pandas as pd
-import numpy as np
+import pytest
 
 # 添加父目录到路径以便导入
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from backtester_engine import compute_buy_and_hold_benchmark
+from labeler import build_binary_label
 from panel_builder import (
     add_ticker_column,
     align_calendar,
     build_panel,
-    validate_panel,
     panel_to_wide,
+    validate_panel,
 )
-from labeler import build_binary_label
-from backtester_engine import compute_buy_and_hold_benchmark
 
 
 class TestAddTickerColumn:

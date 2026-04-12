@@ -123,7 +123,7 @@ def build_panel_sequences(
     )
     all_sequences: List[np.ndarray] = []
     all_labels: List[float] = []
-    for idx, (ticker, start) in enumerate(store.window_keys):
+    for _idx, (ticker, start) in enumerate(store.window_keys):
         feature_values = store.feature_by_ticker[ticker]
         all_sequences.append(feature_values[start : start + seq_len])
         if store.label_by_ticker is not None:

@@ -248,7 +248,7 @@ def add_candlestick_features(
     def calc_candlestick(group):
         o = group[open_col]
         h = group[high_col]
-        l = group[low_col]
+        low = group[low_col]
         c = group[close_col]
 
         result = pd.DataFrame(index=group.index)
@@ -264,7 +264,7 @@ def add_candlestick_features(
         feature_names.append("upper_shadow")
 
         # 下影线
-        lower_shadow = (pd.concat([o, c], axis=1).min(axis=1) - l) / o
+        lower_shadow = (pd.concat([o, c], axis=1).min(axis=1) - low) / o
         result["lower_shadow"] = lower_shadow
         feature_names.append("lower_shadow")
 
@@ -363,8 +363,6 @@ def add_volume_price_features(
 
     # 如果有成交额，添加额外特征
     if amount_col and amount_col in df.columns:
-        amount = df[amount_col]
-
         def calc_amount(group):
             amt = group[amount_col]
             result = pd.DataFrame(index=group.index)
@@ -380,7 +378,7 @@ def add_volume_price_features(
         for col in amt_features.columns:
             df[col] = amt_features[col]
     else:
-        notes.append(f"amount column not found, skipping amount features")
+        notes.append("amount column not found, skipping amount features")
 
     meta = FeatureGroupMeta(
         feature_names=feature_names,

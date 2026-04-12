@@ -23,9 +23,9 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from constants import (
-    REQUIRED_COLS_SINGLE,
-    OPTIONAL_COLS,
     DEFAULT_COLUMN_MAP,
+    OPTIONAL_COLS,
+    REQUIRED_COLS_SINGLE,
 )
 
 logger = logging.getLogger(__name__)
@@ -246,7 +246,7 @@ def load_single_csv(
 
     # 有效性检查
     bad_price = int(
-        ((df["open_qfq"] <= 0) | (df["high_qfq"] <= 0) | 
+        ((df["open_qfq"] <= 0) | (df["high_qfq"] <= 0) |
          (df["low_qfq"] <= 0) | (df["close_qfq"] <= 0)).sum()
     )
     if bad_price > 0:

@@ -6,7 +6,12 @@ import uuid
 import pandas as pd
 import pytest
 
-from main_basket import build_model_config, create_continue_run_dir, normalize_mode_args, resolve_window_config
+from main_basket import (
+    build_model_config,
+    create_continue_run_dir,
+    normalize_mode_args,
+    resolve_window_config,
+)
 from search_space import build_base_model_config
 
 

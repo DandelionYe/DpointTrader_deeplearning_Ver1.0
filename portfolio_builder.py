@@ -23,15 +23,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
 
 from constants import (
+    DEFAULT_MAX_WEIGHT,
     DEFAULT_TOP_K,
     DEFAULT_WEIGHTING,
-    DEFAULT_MAX_WEIGHT,
 )
 
 logger = logging.getLogger(__name__)
