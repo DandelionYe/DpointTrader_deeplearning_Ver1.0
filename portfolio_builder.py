@@ -19,6 +19,7 @@
     >>> from portfolio_builder import build_portfolio
     >>> portfolio = build_portfolio(scores_df, top_k=5, weighting="equal")
 """
+
 from __future__ import annotations
 
 import logging
@@ -101,6 +102,7 @@ class PortfolioConfig:
         min_score: 最低分数阈值
         exclude_tickers: 排除的 ticker 列表
     """
+
     top_k: int = DEFAULT_TOP_K
     weighting: str = DEFAULT_WEIGHTING
     max_weight: float = DEFAULT_MAX_WEIGHT
@@ -124,6 +126,7 @@ class Portfolio:
         cash: 现金比例
         n_holdings: 持仓数
     """
+
     date: pd.Timestamp
     tickers: List[str]
     weights: List[float]
@@ -233,7 +236,7 @@ def compute_weights_score(
     scores_pos = scores_arr - scores_arr.min() + 1e-6
 
     # 幂次变换
-    scores_transformed = scores_pos ** score_power
+    scores_transformed = scores_pos**score_power
 
     weights = _normalize_with_max_weight(scores_transformed, max_weight=max_weight)
     return weights.tolist()
@@ -305,7 +308,9 @@ def compute_weights(
         if volatilities is None:
             logger.warning("vol_inv weighting requires volatilities, falling back to equal")
             return compute_weights_equal(tickers, scores, max_weight=max_weight)
-        return compute_weights_vol_inv(tickers, scores, volatilities, max_weight=max_weight, **kwargs)
+        return compute_weights_vol_inv(
+            tickers, scores, volatilities, max_weight=max_weight, **kwargs
+        )
 
     else:
         logger.warning(f"Unknown weighting '{weighting}', falling back to equal")
@@ -439,14 +444,16 @@ def portfolio_to_df(portfolios: List[Portfolio]) -> pd.DataFrame:
     rows = []
     for port in portfolios:
         for i, ticker in enumerate(port.tickers):
-            rows.append({
-                "date": port.date,
-                "ticker": ticker,
-                "weight": port.weights[i],
-                "score": port.scores[i],
-                "cash": port.cash,
-                "n_holdings": port.n_holdings,
-            })
+            rows.append(
+                {
+                    "date": port.date,
+                    "ticker": ticker,
+                    "weight": port.weights[i],
+                    "score": port.scores[i],
+                    "cash": port.cash,
+                    "n_holdings": port.n_holdings,
+                }
+            )
 
     return pd.DataFrame(rows)
 

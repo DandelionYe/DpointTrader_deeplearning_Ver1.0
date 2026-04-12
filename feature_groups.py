@@ -20,6 +20,7 @@
     >>> from feature_groups import add_all_features
     >>> feature_df = add_all_features(panel_df)
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ class FeatureGroupMeta:
         n_features: 特征数量
         notes: 注释
     """
+
     feature_names: List[str] = field(default_factory=list)
     n_features: int = 0
     notes: List[str] = field(default_factory=list)
@@ -58,6 +60,7 @@ def _apply_per_ticker(df: pd.DataFrame, ticker_col: str, func) -> pd.DataFrame:
 # =========================================================
 # 基础工具函数
 # =========================================================
+
 
 def _safe_log1p(x: pd.Series) -> pd.Series:
     """对序列做 log1p 变换"""
@@ -81,6 +84,7 @@ def _rolling_zscore(x: pd.Series, window: int) -> pd.Series:
 # =========================================================
 # 动量特征
 # =========================================================
+
 
 def add_momentum_features(
     panel_df: pd.DataFrame,
@@ -141,6 +145,7 @@ def add_momentum_features(
 # =========================================================
 # 波动率特征
 # =========================================================
+
 
 def add_volatility_features(
     panel_df: pd.DataFrame,
@@ -216,6 +221,7 @@ def add_volatility_features(
 # =========================================================
 # K 线特征
 # =========================================================
+
 
 def add_candlestick_features(
     panel_df: pd.DataFrame,
@@ -299,6 +305,7 @@ def add_candlestick_features(
 # 量价特征
 # =========================================================
 
+
 def add_volume_price_features(
     panel_df: pd.DataFrame,
     *,
@@ -363,6 +370,7 @@ def add_volume_price_features(
 
     # 如果有成交额，添加额外特征
     if amount_col and amount_col in df.columns:
+
         def calc_amount(group):
             amt = group[amount_col]
             result = pd.DataFrame(index=group.index)
@@ -392,6 +400,7 @@ def add_volume_price_features(
 # =========================================================
 # TA 技术指标
 # =========================================================
+
 
 def add_ta_indicators(
     panel_df: pd.DataFrame,
@@ -527,6 +536,7 @@ def add_ta_indicators(
 # =========================================================
 # 统一入口
 # =========================================================
+
 
 def add_all_features(
     panel_df: pd.DataFrame,

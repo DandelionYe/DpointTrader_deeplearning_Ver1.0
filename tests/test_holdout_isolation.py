@@ -1,6 +1,7 @@
 """
 测试holdout隔离性
 """
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,12 +19,14 @@ def sample_panel():
     rows = []
     for ticker in tickers:
         for date in dates:
-            rows.append({
-                "date": date,
-                "ticker": ticker,
-                "feature1": np.random.randn(),
-                "feature2": np.random.randn(),
-            })
+            rows.append(
+                {
+                    "date": date,
+                    "ticker": ticker,
+                    "feature1": np.random.randn(),
+                    "feature2": np.random.randn(),
+                }
+            )
 
     return pd.DataFrame(rows)
 

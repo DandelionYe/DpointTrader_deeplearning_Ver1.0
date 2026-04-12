@@ -61,14 +61,18 @@ def test_torch_sequence_multiclass_pipeline_smoke():
     model, _ = train_panel_model(X, y, config, date_col="date", ticker_col="ticker", seed=42)
     pred = predict_panel(model, X, date_col="date", ticker_col="ticker")
 
-    expected_rows = sum(max(0, len(dates) - config["model_params"]["seq_len"] + 1) for _ in ["A", "B"])
+    expected_rows = sum(
+        max(0, len(dates) - config["model_params"]["seq_len"] + 1) for _ in ["A", "B"]
+    )
     assert len(pred) == expected_rows
     assert pred["probability_available"].eq(True).all()
     assert pred["score"].between(-1.0, 1.0).all()
     assert pred["proba_up"].between(0.0, 1.0).all()
     assert set(pred["prediction"].unique()).issubset({0, 1, 2})
 
-    scores_df = align_scores_with_labels(pred, X, y, config=config, date_col="date", ticker_col="ticker")
+    scores_df = align_scores_with_labels(
+        pred, X, y, config=config, date_col="date", ticker_col="ticker"
+    )
     metrics = evaluate_scores_df(scores_df, date_col="date", ticker_col="ticker", config=config)
 
     assert "accuracy" in metrics

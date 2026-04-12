@@ -105,7 +105,11 @@ def run_search(
                 )
             candidate_metrics = dict(train_result.val_metrics)
             candidate_notes = list(train_result.notes)
-            candidate_oof = train_result.oof_scores.copy() if train_result.oof_scores is not None else pd.DataFrame()
+            candidate_oof = (
+                train_result.oof_scores.copy()
+                if train_result.oof_scores is not None
+                else pd.DataFrame()
+            )
             candidate_model = train_result.model
         except Exception as exc:
             logger.warning("Search run %d failed: %s", run_idx + 1, exc)

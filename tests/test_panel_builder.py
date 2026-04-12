@@ -8,6 +8,7 @@ Panel 构建器测试模块
 运行测试:
     pytest test_panel_builder.py -v
 """
+
 import os
 import sys
 
@@ -15,7 +16,7 @@ import pandas as pd
 import pytest
 
 # 添加父目录到路径以便导入
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from backtester_engine import compute_buy_and_hold_benchmark
 from labeler import build_binary_label
@@ -46,11 +47,13 @@ class TestAlignCalendar:
 
     def test_inner_align(self):
         """测试交集对齐"""
-        df = pd.DataFrame({
-            "date": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03"],
-            "ticker": ["A", "A", "B", "B"],
-            "close": [10.0, 10.1, 20.0, 20.1],
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03"],
+                "ticker": ["A", "A", "B", "B"],
+                "close": [10.0, 10.1, 20.0, 20.1],
+            }
+        )
 
         result = align_calendar(df, method="inner")
 
@@ -60,11 +63,13 @@ class TestAlignCalendar:
 
     def test_outer_align(self):
         """测试并集对齐"""
-        df = pd.DataFrame({
-            "date": ["2024-01-01", "2024-01-02"],
-            "ticker": ["A", "A"],
-            "close": [10.0, 10.1],
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-02"],
+                "ticker": ["A", "A"],
+                "close": [10.0, 10.1],
+            }
+        )
 
         result = align_calendar(df, method="outer")
 
@@ -76,16 +81,20 @@ class TestBuildPanel:
 
     def test_build_panel_from_frames(self):
         """测试从多个 DataFrame 构建 panel"""
-        df1 = pd.DataFrame({
-            "date": pd.date_range("2024-01-01", periods=3),
-            "close": [10.0, 10.1, 10.2],
-            "ticker": "A",
-        })
-        df2 = pd.DataFrame({
-            "date": pd.date_range("2024-01-01", periods=3),
-            "close": [20.0, 20.1, 20.2],
-            "ticker": "B",
-        })
+        df1 = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=3),
+                "close": [10.0, 10.1, 10.2],
+                "ticker": "A",
+            }
+        )
+        df2 = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=3),
+                "close": [20.0, 20.1, 20.2],
+                "ticker": "B",
+            }
+        )
 
         panel = build_panel([df1, df2], basket_name="test")
 
@@ -100,11 +109,13 @@ class TestValidatePanel:
 
     def test_valid_panel(self):
         """测试有效 panel"""
-        df = pd.DataFrame({
-            "date": ["2024-01-01", "2024-01-02"],
-            "ticker": ["A", "A"],
-            "close": [10.0, 10.1],
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-02"],
+                "ticker": ["A", "A"],
+                "close": [10.0, 10.1],
+            }
+        )
 
         valid, issues = validate_panel(df)
 
@@ -113,11 +124,13 @@ class TestValidatePanel:
 
     def test_duplicate_detection(self):
         """测试重复检测"""
-        df = pd.DataFrame({
-            "date": ["2024-01-01", "2024-01-01"],
-            "ticker": ["A", "A"],
-            "close": [10.0, 10.1],
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-01"],
+                "ticker": ["A", "A"],
+                "close": [10.0, 10.1],
+            }
+        )
 
         valid, issues = validate_panel(df)
 
@@ -130,11 +143,13 @@ class TestPanelToWide:
 
     def test_panel_to_wide(self):
         """测试转宽格式"""
-        df = pd.DataFrame({
-            "date": ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"],
-            "ticker": ["A", "B", "A", "B"],
-            "close": [10.0, 20.0, 10.1, 20.1],
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"],
+                "ticker": ["A", "B", "A", "B"],
+                "close": [10.0, 20.0, 10.1, 20.1],
+            }
+        )
 
         wide = panel_to_wide(df, value_col="close")
 
@@ -148,14 +163,22 @@ class TestPanelSemantics:
 
     def test_binary_label_drops_last_row_per_ticker(self):
         """每个 ticker 的末行应没有未来标签"""
-        df = pd.DataFrame({
-            "date": pd.to_datetime([
-                "2024-01-01", "2024-01-02", "2024-01-03",
-                "2024-01-01", "2024-01-02", "2024-01-03",
-            ]),
-            "ticker": ["A", "A", "A", "B", "B", "B"],
-            "close_qfq": [1.0, 2.0, 3.0, 3.0, 2.0, 1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    [
+                        "2024-01-01",
+                        "2024-01-02",
+                        "2024-01-03",
+                        "2024-01-01",
+                        "2024-01-02",
+                        "2024-01-03",
+                    ]
+                ),
+                "ticker": ["A", "A", "A", "B", "B", "B"],
+                "close_qfq": [1.0, 2.0, 3.0, 3.0, 2.0, 1.0],
+            }
+        )
 
         labels, _ = build_binary_label(df)
 
@@ -164,12 +187,14 @@ class TestPanelSemantics:
 
     def test_buy_and_hold_benchmark_keeps_cash(self):
         """benchmark 应保留整手约束下剩余现金"""
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]),
-            "ticker": ["A", "B", "A", "B"],
-            "open_qfq": [333.0, 333.0, 333.0, 333.0],
-            "close_qfq": [333.0, 333.0, 333.0, 333.0],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]),
+                "ticker": ["A", "B", "A", "B"],
+                "open_qfq": [333.0, 333.0, 333.0, 333.0],
+                "close_qfq": [333.0, 333.0, 333.0, 333.0],
+            }
+        )
 
         bench = compute_buy_and_hold_benchmark(df, initial_cash=100000.0)
 

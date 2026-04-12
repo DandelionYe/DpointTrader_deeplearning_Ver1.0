@@ -8,6 +8,7 @@
 运行测试:
     pytest test_ranking_metrics.py -v
 """
+
 import os
 import sys
 
@@ -16,7 +17,7 @@ import pandas as pd
 import pytest
 
 # 添加父目录到路径以便导入
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ranking_metrics import (
     compute_all_ranking_metrics,
@@ -35,12 +36,14 @@ class TestComputeIC:
         # 需要更多数据点来计算 IC
         np.random.seed(42)
         n = 50
-        df = pd.DataFrame({
-            "date": ["2024-01-01"] * n,
-            "ticker": [f"T{i}" for i in range(n)],
-            "score": np.random.randn(n),
-            "label": np.random.randint(0, 2, n),
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01"] * n,
+                "ticker": [f"T{i}" for i in range(n)],
+                "score": np.random.randn(n),
+                "label": np.random.randint(0, 2, n),
+            }
+        )
         # 让 score 和 label 有一定相关性
         df["label"] = (df["score"] + np.random.randn(n) * 0.5) > 0
 
@@ -56,12 +59,14 @@ class TestComputeRankIC:
 
     def test_compute_rank_ic(self):
         """测试 RankIC 计算"""
-        df = pd.DataFrame({
-            "date": ["2024-01-01", "2024-01-01", "2024-01-01"],
-            "ticker": ["A", "B", "C"],
-            "score": [0.9, 0.6, 0.3],
-            "label": [1, 0.5, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-01", "2024-01-01"],
+                "ticker": ["A", "B", "C"],
+                "score": [0.9, 0.6, 0.3],
+                "label": [1, 0.5, 0],
+            }
+        )
 
         rank_ic_series = compute_rank_ic(df, score_col="score", label_col="label", date_col="date")
 
@@ -75,12 +80,14 @@ class TestComputeTopkReturn:
 
     def test_compute_topk_return(self):
         """测试 TopK 收益计算"""
-        df = pd.DataFrame({
-            "date": ["2024-01-01"] * 5,
-            "ticker": ["A", "B", "C", "D", "E"],
-            "score": [0.9, 0.8, 0.7, 0.6, 0.5],
-            "label": [0.05, 0.03, 0.02, 0.01, -0.01],  # 收益率
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01"] * 5,
+                "ticker": ["A", "B", "C", "D", "E"],
+                "score": [0.9, 0.8, 0.7, 0.6, 0.5],
+                "label": [0.05, 0.03, 0.02, 0.01, -0.01],  # 收益率
+            }
+        )
 
         topk_return = compute_topk_return(
             df,
@@ -102,12 +109,14 @@ class TestComputeLayeredReturns:
         """测试分层收益计算"""
         np.random.seed(42)
         n = 100
-        df = pd.DataFrame({
-            "date": ["2024-01-01"] * n,
-            "ticker": [f"T{i}" for i in range(n)],
-            "score": np.random.randn(n),
-            "label": np.random.randn(n) * 0.1,
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01"] * n,
+                "ticker": [f"T{i}" for i in range(n)],
+                "score": np.random.randn(n),
+                "label": np.random.randn(n) * 0.1,
+            }
+        )
 
         # 让 score 和 label 正相关
         df["label"] = df["score"] * 0.1 + np.random.randn(n) * 0.01
@@ -141,12 +150,14 @@ class TestComputeAllMetrics:
             for i in range(n_tickers):
                 score = np.random.randn()
                 label = score * 0.3 + np.random.randn() * 0.1  # 正相关
-                rows.append({
-                    "date": date,
-                    "ticker": f"T{i}",
-                    "score": score,
-                    "label": 1 if label > 0 else 0,
-                })
+                rows.append(
+                    {
+                        "date": date,
+                        "ticker": f"T{i}",
+                        "score": score,
+                        "label": 1 if label > 0 else 0,
+                    }
+                )
 
         df = pd.DataFrame(rows)
 

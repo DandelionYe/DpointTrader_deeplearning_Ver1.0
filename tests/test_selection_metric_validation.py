@@ -6,7 +6,9 @@ from tasks import validate_primary_metric
 
 
 def test_regression_rejects_auc_primary_metric():
-    with pytest.raises(ValueError, match="primary_metric 'auc' is invalid for task_type 'regression'"):
+    with pytest.raises(
+        ValueError, match="primary_metric 'auc' is invalid for task_type 'regression'"
+    ):
         validate_primary_metric("regression", "auc")
 
 

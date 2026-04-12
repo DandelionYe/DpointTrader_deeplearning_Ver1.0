@@ -1,6 +1,7 @@
 """
 测试序列边界（按ticker隔离）
 """
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,12 +19,14 @@ def sample_panel():
     rows = []
     for ticker in tickers:
         for date in dates:
-            rows.append({
-                "date": date,
-                "ticker": ticker,
-                "feature1": np.random.randn(),
-                "feature2": np.random.randn(),
-            })
+            rows.append(
+                {
+                    "date": date,
+                    "ticker": ticker,
+                    "feature1": np.random.randn(),
+                    "feature2": np.random.randn(),
+                }
+            )
 
     df = pd.DataFrame(rows)
     df["label"] = (df["feature1"] > 0).astype(int)

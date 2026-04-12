@@ -50,7 +50,9 @@ class ContinueCompatibilityError(ValueError):
 
 
 def _stable_hash(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -63,7 +65,9 @@ def _task_type_from_label_mode(label_mode: str) -> str:
     return "unknown"
 
 
-def compute_feature_schema_hash(feature_names: list[str], extra: Optional[Dict[str, Any]] = None) -> str:
+def compute_feature_schema_hash(
+    feature_names: list[str], extra: Optional[Dict[str, Any]] = None
+) -> str:
     payload = {
         "feature_names": list(feature_names),
         "extra": extra or {},
@@ -100,10 +104,14 @@ def build_run_contract(
 
     feature_names = list(getattr(feature_meta, "feature_names", []))
     feature_params = dict(getattr(feature_meta, "params", {}))
-    include_cross_section = bool(feature_params.get("include_cross_section", getattr(args, "include_cross_section", 1)))
+    include_cross_section = bool(
+        feature_params.get("include_cross_section", getattr(args, "include_cross_section", 1))
+    )
     model_params = dict(model_config.get("model_params", {}))
     seq_len = model_params.get("seq_len")
-    label_mode = str(getattr(feature_meta, "label_mode", getattr(args, "label_mode", "binary_next_close_up")))
+    label_mode = str(
+        getattr(feature_meta, "label_mode", getattr(args, "label_mode", "binary_next_close_up"))
+    )
     task_type = str(getattr(args, "task_type", "") or _task_type_from_label_mode(label_mode))
     label_horizon_days = max(1, int(getattr(args, "label_horizon_days", 1)))
 
@@ -113,7 +121,9 @@ def build_run_contract(
             date_min=date_min,
             date_max=date_max,
             n_rows=int(len(sorted_panel)),
-            n_tickers=int(sorted_panel["ticker"].nunique()) if "ticker" in sorted_panel.columns else 0,
+            n_tickers=int(sorted_panel["ticker"].nunique())
+            if "ticker" in sorted_panel.columns
+            else 0,
         ),
         feature=FeatureContract(
             feature_names=feature_names,
@@ -182,7 +192,10 @@ def validate_continue_compatibility(
     current = contract_to_dict(current_contract)
     mismatches: list[str] = []
 
-    if not allow_data_contract_mismatch and current["data"]["data_hash"] != saved_contract["data"]["data_hash"]:
+    if (
+        not allow_data_contract_mismatch
+        and current["data"]["data_hash"] != saved_contract["data"]["data_hash"]
+    ):
         mismatches.append(
             "Data contract mismatch: data_hash differs "
             f"(saved={saved_contract['data']['data_hash']}, current={current['data']['data_hash']})"

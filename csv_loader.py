@@ -14,6 +14,7 @@ CSV 数据加载器模块
     >>> from csv_loader import load_single_csv
     >>> df, report = load_single_csv("600036.csv", ticker="600036")
 """
+
 from __future__ import annotations
 
 import logging
@@ -44,6 +45,7 @@ class SingleStockReport:
         derived_cols: 衍生列列表
         notes: 处理过程中的注释和警告
     """
+
     ticker: str
     source_file: str
     rows_raw: int
@@ -130,8 +132,7 @@ def validate_csv_structure(
 
     if not valid and strict:
         raise ValueError(
-            f"Missing required columns: {missing_required}. "
-            f"Found columns: {list(df.columns)}"
+            f"Missing required columns: {missing_required}. Found columns: {list(df.columns)}"
         )
 
     return valid, missing_required, missing_optional
@@ -180,6 +181,7 @@ def load_single_csv(
     # 提取 ticker
     if ticker is None:
         import os
+
         ticker = os.path.splitext(os.path.basename(file_path))[0]
         notes.append(f"Ticker extracted from filename: {ticker}")
 
@@ -197,9 +199,7 @@ def load_single_csv(
     )
 
     if not allow_missing_optional and missing_optional:
-        raise ValueError(
-            f"Missing optional columns (not allowed): {missing_optional}"
-        )
+        raise ValueError(f"Missing optional columns (not allowed): {missing_optional}")
 
     # 日期解析
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -214,9 +214,7 @@ def load_single_csv(
     # 重复日期检查
     duplicate_dates = int(df["date"].duplicated().sum())
     if duplicate_dates > 0:
-        notes.append(
-            f"Found duplicate dates: {duplicate_dates}. Keeping last occurrence."
-        )
+        notes.append(f"Found duplicate dates: {duplicate_dates}. Keeping last occurrence.")
         df = df.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
 
     # 数值列转换
@@ -246,20 +244,26 @@ def load_single_csv(
 
     # 有效性检查
     bad_price = int(
-        ((df["open_qfq"] <= 0) | (df["high_qfq"] <= 0) |
-         (df["low_qfq"] <= 0) | (df["close_qfq"] <= 0)).sum()
+        (
+            (df["open_qfq"] <= 0)
+            | (df["high_qfq"] <= 0)
+            | (df["low_qfq"] <= 0)
+            | (df["close_qfq"] <= 0)
+        ).sum()
     )
     if bad_price > 0:
         notes.append(f"Dropped non-positive price rows: {bad_price}")
         df = df[
-            (df["open_qfq"] > 0) & (df["high_qfq"] > 0) &
-            (df["low_qfq"] > 0) & (df["close_qfq"] > 0)
+            (df["open_qfq"] > 0)
+            & (df["high_qfq"] > 0)
+            & (df["low_qfq"] > 0)
+            & (df["close_qfq"] > 0)
         ].copy()
 
     # OHLC 一致性检查
     bad_ohlc_mask = ~(
-        (df["high_qfq"] >= df[["open_qfq", "close_qfq", "low_qfq"]].max(axis=1)) &
-        (df["low_qfq"] <= df[["open_qfq", "close_qfq", "high_qfq"]].min(axis=1))
+        (df["high_qfq"] >= df[["open_qfq", "close_qfq", "low_qfq"]].max(axis=1))
+        & (df["low_qfq"] <= df[["open_qfq", "close_qfq", "high_qfq"]].min(axis=1))
     )
     bad_ohlc_rows = int(bad_ohlc_mask.sum())
     if bad_ohlc_rows > 0:
@@ -271,10 +275,7 @@ def load_single_csv(
 
     # 数据警告
     if len(df) < 300:
-        notes.append(
-            f"Warning: data length {len(df)} < 300 trading days. "
-            "ML may be unstable."
-        )
+        notes.append(f"Warning: data length {len(df)} < 300 trading days. ML may be unstable.")
 
     report = SingleStockReport(
         ticker=ticker,

@@ -21,6 +21,7 @@
     >>> from labeler import build_label
     >>> y = build_label(panel_df, mode="binary_next_close_up")
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,6 +51,7 @@ class LabelMeta:
         label_std: 标签标准差（回归）
         notes: 注释
     """
+
     label_mode: str
     n_samples: int
     n_positive: Optional[int] = None
@@ -91,9 +93,9 @@ def build_binary_label(
     future_close = df.groupby(ticker_col)[close_col].shift(-shift)
     df["label"] = pd.Series(np.nan, index=df.index, dtype=float)
     valid_mask = future_close.notna()
-    df.loc[valid_mask, "label"] = (
-        future_close.loc[valid_mask] > close.loc[valid_mask]
-    ).astype(float)
+    df.loc[valid_mask, "label"] = (future_close.loc[valid_mask] > close.loc[valid_mask]).astype(
+        float
+    )
 
     # 去除末尾 NaN
     df = df.dropna(subset=["label"])
@@ -354,7 +356,9 @@ def build_labels(
         shift=max(1, int(label_spec.horizon_days)),
         **extra_kwargs,
     )
-    label_end_date = panel_df.groupby(ticker_col)[date_col].shift(-max(1, int(label_spec.horizon_days)))
+    label_end_date = panel_df.groupby(ticker_col)[date_col].shift(
+        -max(1, int(label_spec.horizon_days))
+    )
     label_meta = panel_df[[date_col, ticker_col]].copy()
     label_meta["label_end_date"] = pd.to_datetime(label_end_date)
     label_meta["target"] = target.reindex(label_meta.index)

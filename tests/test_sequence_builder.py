@@ -1,6 +1,7 @@
 """
 测试序列构建器
 """
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,12 +19,14 @@ def sample_panel():
     rows = []
     for ticker in tickers:
         for date in dates:
-            rows.append({
-                "date": date,
-                "ticker": ticker,
-                "feature1": np.random.randn(),
-                "feature2": np.random.randn(),
-            })
+            rows.append(
+                {
+                    "date": date,
+                    "ticker": ticker,
+                    "feature1": np.random.randn(),
+                    "feature2": np.random.randn(),
+                }
+            )
 
     df = pd.DataFrame(rows)
     df["label"] = (df["feature1"] > 0).astype(int)
@@ -40,18 +43,21 @@ class TestSequenceBuilder:
 
         rows = []
         for date in dates:
-            rows.append({
-                "date": date,
-                "ticker": "A",
-                "feature1": np.random.randn(),
-            })
+            rows.append(
+                {
+                    "date": date,
+                    "ticker": "A",
+                    "feature1": np.random.randn(),
+                }
+            )
 
         df = pd.DataFrame(rows)
         y = pd.Series(np.random.randn(len(df)), index=df.index)
 
         seq_len = 10
         bundle = build_panel_sequences(
-            df, y,
+            df,
+            y,
             date_col="date",
             ticker_col="ticker",
             seq_len=seq_len,
@@ -116,7 +122,11 @@ class TestSequenceBuilder:
         # 检查第一个窗口的日期
         for ticker in ["A", "B"]:
             ticker_meta = bundle.meta_df[bundle.meta_df["ticker"] == ticker].reset_index(drop=True)
-            ticker_data = sample_panel[sample_panel["ticker"] == ticker].sort_values("date").reset_index(drop=True)
+            ticker_data = (
+                sample_panel[sample_panel["ticker"] == ticker]
+                .sort_values("date")
+                .reset_index(drop=True)
+            )
 
             # 第一个窗口的最后一天应该是seq_len-1
             assert ticker_meta.iloc[0]["date"] == ticker_data.iloc[seq_len - 1]["date"]

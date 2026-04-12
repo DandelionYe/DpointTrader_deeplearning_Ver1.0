@@ -74,7 +74,9 @@ def resolve_price_limit(
         down_pct = constraints.default_limit_down_pct_chinext_star
     else:
         up_pct = constraints.default_limit_up_pct_main if constraints else default_limit_up_pct
-        down_pct = constraints.default_limit_down_pct_main if constraints else default_limit_down_pct
+        down_pct = (
+            constraints.default_limit_down_pct_main if constraints else default_limit_down_pct
+        )
     return float(prev_close) * (1 + up_pct), float(prev_close) * (1 - down_pct)
 
 

@@ -14,6 +14,7 @@ Basket 模式每日更新器
 使用示例:
     python dpoint_updater_basket.py --basket basket_1 --output ./signals
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,9 +48,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     """解析命令行参数"""
-    parser = argparse.ArgumentParser(
-        description="Basket 模式每日 Dpoint 信号更新器"
-    )
+    parser = argparse.ArgumentParser(description="Basket 模式每日 Dpoint 信号更新器")
 
     # 数据参数
     parser.add_argument(
@@ -133,6 +132,7 @@ def load_or_train_model(
     if model_path and os.path.exists(model_path) and not retrain:
         logger.info(f"Loading model from: {model_path}")
         import joblib
+
         model = joblib.load(model_path)
 
         # 加载模型信息
@@ -249,14 +249,16 @@ def generate_signals(
     # 生成信号
     signal_rows = []
     for i, ticker in enumerate(portfolio.tickers):
-        signal_rows.append({
-            "trade_date": trade_date,
-            "ticker": ticker,
-            "score": portfolio.scores[i],
-            "weight": portfolio.weights[i],
-            "action": "buy",
-            "priority": i + 1,
-        })
+        signal_rows.append(
+            {
+                "trade_date": trade_date,
+                "ticker": ticker,
+                "score": portfolio.scores[i],
+                "weight": portfolio.weights[i],
+                "action": "buy",
+                "priority": i + 1,
+            }
+        )
 
     signals_df = pd.DataFrame(signal_rows)
     return signals_df
@@ -331,6 +333,7 @@ def main() -> None:
 
     # 保存模型
     import joblib
+
     model_dir = os.path.join(args.output, "models")
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, f"model_{trade_date}.joblib")

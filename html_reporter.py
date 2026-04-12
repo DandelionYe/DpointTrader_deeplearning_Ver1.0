@@ -13,6 +13,7 @@ HTML 报告生成器
     >>> from html_reporter import generate_html_report
     >>> generate_html_report("report.html", backtest_result, metrics)
 """
+
 from __future__ import annotations
 
 import logging
@@ -160,14 +161,17 @@ def generate_html_report(
             total_return = (final - initial) / initial
             max_equity = equity_curve["equity"].max()
             min_equity = equity_curve["equity"].min()
-            max_dd = ((equity_curve["equity"] - equity_curve["equity"].cummax()) / equity_curve["equity"].cummax()).min()
+            max_dd = (
+                (equity_curve["equity"] - equity_curve["equity"].cummax())
+                / equity_curve["equity"].cummax()
+            ).min()
 
             html += f"""
         <table>
             <tr><th>统计项</th><th>值</th></tr>
             <tr><td>初始权益</td><td>{initial:,.2f}</td></tr>
             <tr><td>最终权益</td><td>{final:,.2f}</td></tr>
-            <tr><td>总收益</td><td class="{'positive' if total_return > 0 else 'negative' if total_return < 0 else ''}">{total_return:.2%}</td></tr>
+            <tr><td>总收益</td><td class="{"positive" if total_return > 0 else "negative" if total_return < 0 else ""}">{total_return:.2%}</td></tr>
             <tr><td>最高权益</td><td>{max_equity:,.2f}</td></tr>
             <tr><td>最低权益</td><td>{min_equity:,.2f}</td></tr>
             <tr><td>最大回撤</td><td class="negative">{max_dd:.2%}</td></tr>
@@ -175,7 +179,11 @@ def generate_html_report(
 """
 
     # 配置信息
-    if benchmark_curve is not None and not benchmark_curve.empty and "bnh_cum_return" in benchmark_curve.columns:
+    if (
+        benchmark_curve is not None
+        and not benchmark_curve.empty
+        and "bnh_cum_return" in benchmark_curve.columns
+    ):
         benchmark_total_return = float(benchmark_curve["bnh_cum_return"].iloc[-1])
         html += f"""
         <h2>Benchmark</h2>
@@ -185,7 +193,11 @@ def generate_html_report(
         </table>
 """
 
-    if scores_df is not None and not scores_df.empty and {"signal_date", "trade_date"}.issubset(scores_df.columns):
+    if (
+        scores_df is not None
+        and not scores_df.empty
+        and {"signal_date", "trade_date"}.issubset(scores_df.columns)
+    ):
         signal_dates = pd.to_datetime(scores_df["signal_date"])
         trade_dates = pd.to_datetime(scores_df["trade_date"])
         lag_days = (trade_dates - signal_dates).dt.days
@@ -224,7 +236,11 @@ def generate_html_report(
             html += """        </table>
 """
 
-    if equity_curve is not None and not equity_curve.empty and {"is_rebalance_day", "rebalance_bucket"}.issubset(equity_curve.columns):
+    if (
+        equity_curve is not None
+        and not equity_curve.empty
+        and {"is_rebalance_day", "rebalance_bucket"}.issubset(equity_curve.columns)
+    ):
         rebalance_df = equity_curve[equity_curve["is_rebalance_day"].fillna(False)].copy()
         if not rebalance_df.empty:
             html += """

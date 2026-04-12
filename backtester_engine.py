@@ -76,7 +76,9 @@ def _annotate_tradeability(
             reason = "missing_prev_close"
         elif limit_up is not None and float(open_price) >= float(limit_up):
             reason = "limit_up"
-        elif ("volume" in annotated.columns) and (pd.isna(row.get("volume")) or float(row.get("volume", 0)) <= 0):
+        elif ("volume" in annotated.columns) and (
+            pd.isna(row.get("volume")) or float(row.get("volume", 0)) <= 0
+        ):
             reason = "volume_cap"
 
         expected_reasons.append(reason)
@@ -88,7 +90,15 @@ def _annotate_tradeability(
     annotated["resolved_limit_down_price"] = limit_downs
     drop_cols = [
         col
-        for col in ["open_qfq", "_prev_close_for_trade", "up_limit_price", "down_limit_price", "board", "is_st", "volume"]
+        for col in [
+            "open_qfq",
+            "_prev_close_for_trade",
+            "up_limit_price",
+            "down_limit_price",
+            "board",
+            "is_st",
+            "volume",
+        ]
         if col in annotated.columns
     ]
     return annotated.drop(columns=drop_cols)
@@ -173,7 +183,9 @@ def prepare_scores_for_backtest(
         if drop_untradable_signals:
             prepared = prepared[prepared[trade_date_col].notna()].copy()
         prep_stats["prepared_signals"] = int(len(prepared))
-        prep_stats["dropped_signals"] = int(prep_stats["raw_signals"] - prep_stats["prepared_signals"])
+        prep_stats["dropped_signals"] = int(
+            prep_stats["raw_signals"] - prep_stats["prepared_signals"]
+        )
         if return_stats:
             return prepared.copy(), prep_stats
         return prepared.copy()
@@ -184,7 +196,9 @@ def prepare_scores_for_backtest(
         if drop_untradable_signals:
             prepared = prepared.iloc[0:0].copy()
         prep_stats["prepared_signals"] = int(len(prepared))
-        prep_stats["dropped_signals"] = int(prep_stats["raw_signals"] - prep_stats["prepared_signals"])
+        prep_stats["dropped_signals"] = int(
+            prep_stats["raw_signals"] - prep_stats["prepared_signals"]
+        )
         if return_stats:
             return prepared, prep_stats
         return prepared
@@ -193,8 +207,7 @@ def prepare_scores_for_backtest(
     lag = max(1, int(execution_lag_days))
     next_positions = trading_dates.searchsorted(signal_dates, side="right") + (lag - 1)
     prepared[trade_date_col] = [
-        trading_dates[pos] if pos < len(trading_dates) else pd.NaT
-        for pos in next_positions
+        trading_dates[pos] if pos < len(trading_dates) else pd.NaT for pos in next_positions
     ]
     prepared = _annotate_tradeability(
         panel_df,
@@ -281,7 +294,12 @@ def _build_rebalance_calendar(
 ) -> Dict[pd.Timestamp, str]:
     dates = sorted(pd.to_datetime(dates))
     if rebalance_freq == "daily":
-        return {pd.Timestamp(date): _rebalance_bucket_key(pd.Timestamp(date), rebalance_freq=rebalance_freq) for date in dates}
+        return {
+            pd.Timestamp(date): _rebalance_bucket_key(
+                pd.Timestamp(date), rebalance_freq=rebalance_freq
+            )
+            for date in dates
+        }
 
     buckets: Dict[str, List[pd.Timestamp]] = {}
     for date in dates:
@@ -351,7 +369,9 @@ def backtest_from_scores(
     dates = sorted(pd.to_datetime(panel_df[date_col].unique()))
 
     if not dates:
-        empty_equity = pd.DataFrame(columns=["date", "equity", "cash", "market_value", "n_holdings", "is_rebalance_day"])
+        empty_equity = pd.DataFrame(
+            columns=["date", "equity", "cash", "market_value", "n_holdings", "is_rebalance_day"]
+        )
         return BacktestResult(
             equity_curve=empty_equity,
             trades=pd.DataFrame(),
@@ -376,9 +396,15 @@ def backtest_from_scores(
         "raw_signals": int(len(scores_df)),
         "prepared_signals": int(len(scores_df)),
         "dropped_signals": 0,
-        "avg_signal_to_trade_days": float(signal_trade_lag_days.mean()) if not signal_trade_lag_days.empty else 0.0,
-        "min_signal_to_trade_days": int(signal_trade_lag_days.min()) if not signal_trade_lag_days.empty else 0,
-        "max_signal_to_trade_days": int(signal_trade_lag_days.max()) if not signal_trade_lag_days.empty else 0,
+        "avg_signal_to_trade_days": float(signal_trade_lag_days.mean())
+        if not signal_trade_lag_days.empty
+        else 0.0,
+        "min_signal_to_trade_days": int(signal_trade_lag_days.min())
+        if not signal_trade_lag_days.empty
+        else 0,
+        "max_signal_to_trade_days": int(signal_trade_lag_days.max())
+        if not signal_trade_lag_days.empty
+        else 0,
     }
 
     all_orders: List[Dict[str, object]] = []
@@ -418,23 +444,30 @@ def backtest_from_scores(
         )
 
         day_scores = score_groups.get(pd.Timestamp(date), pd.DataFrame())
-        should_rebalance = bool(
-            pd.Timestamp(date) in rebalance_calendar and not day_scores.empty
-        )
+        should_rebalance = bool(pd.Timestamp(date) in rebalance_calendar and not day_scores.empty)
         rebalance_bucket = rebalance_calendar.get(pd.Timestamp(date))
         if pd.Timestamp(date) in rebalance_calendar and day_scores.empty:
             rebalance_days_without_scores += 1
 
         if should_rebalance:
-            tradable_scores = day_scores[day_scores[ticker_col].isin(execution_prices.keys())].copy()
-            if portfolio_config.skip_untradeable_on_rebalance and "is_tradeable" in tradable_scores.columns:
-                tradable_scores = tradable_scores[tradable_scores["is_tradeable"].fillna(False)].copy()
+            tradable_scores = day_scores[
+                day_scores[ticker_col].isin(execution_prices.keys())
+            ].copy()
+            if (
+                portfolio_config.skip_untradeable_on_rebalance
+                and "is_tradeable" in tradable_scores.columns
+            ):
+                tradable_scores = tradable_scores[
+                    tradable_scores["is_tradeable"].fillna(False)
+                ].copy()
             tradable_coverage_values.append(
                 float(len(tradable_scores) / len(day_scores)) if len(day_scores) else 0.0
             )
             if tradable_scores.empty:
                 rebalance_days_without_tradable_scores += 1
-                notes.append(f"{pd.Timestamp(date).date()}: rebalance day had no tradable scores at execution open.")
+                notes.append(
+                    f"{pd.Timestamp(date).date()}: rebalance day had no tradable scores at execution open."
+                )
             else:
                 target_portfolio = build_portfolio(
                     tradable_scores,
@@ -491,10 +524,7 @@ def backtest_from_scores(
                                 }
                             )
 
-        current_holdings = {
-            pos.ticker: pos.shares
-            for pos in engine.position_book.get_positions()
-        }
+        current_holdings = {pos.ticker: pos.shares for pos in engine.position_book.get_positions()}
 
         equity = engine.position_book.total_equity(close_prices)
         equity_rows.append(
@@ -547,7 +577,9 @@ def backtest_from_scores(
             "rebalance_days_total": int(len(rebalance_calendar)),
             "rebalance_days_without_scores": int(rebalance_days_without_scores),
             "rebalance_days_without_tradable_scores": int(rebalance_days_without_tradable_scores),
-            "avg_tradable_score_coverage": float(np.mean(tradable_coverage_values)) if tradable_coverage_values else 0.0,
+            "avg_tradable_score_coverage": float(np.mean(tradable_coverage_values))
+            if tradable_coverage_values
+            else 0.0,
         },
         notes=notes,
     )
@@ -595,8 +627,7 @@ def compute_buy_and_hold_benchmark(
         )
 
         market_value = sum(
-            shares * price_dict.get(ticker, 0.0)
-            for ticker, shares in holdings.items()
+            shares * price_dict.get(ticker, 0.0) for ticker, shares in holdings.items()
         )
         equity = cash + market_value
         equity_curve.append(

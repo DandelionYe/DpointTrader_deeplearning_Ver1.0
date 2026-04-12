@@ -132,7 +132,9 @@ class TestNoLeakagePanel:
         )
 
         full_row = full_X[full_X["date"] == compare_date].sort_values(["date", "ticker"])
-        truncated_row = truncated_X[truncated_X["date"] == compare_date].sort_values(["date", "ticker"])
+        truncated_row = truncated_X[truncated_X["date"] == compare_date].sort_values(
+            ["date", "ticker"]
+        )
 
         assert not full_row.empty
         assert not truncated_row.empty

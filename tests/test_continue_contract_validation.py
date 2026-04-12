@@ -31,7 +31,9 @@ def _sample_panel() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _feature_meta(*, feature_names=None, label_mode="binary_next_close_up", include_cross_section=True) -> PanelFeatureMeta:
+def _feature_meta(
+    *, feature_names=None, label_mode="binary_next_close_up", include_cross_section=True
+) -> PanelFeatureMeta:
     return PanelFeatureMeta(
         feature_names=list(feature_names or ["f1", "f2"]),
         label_mode=label_mode,

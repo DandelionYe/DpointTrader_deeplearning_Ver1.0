@@ -104,17 +104,40 @@ def resolve_metric_spec(task_type: str, args: Any) -> MetricSpec:
     validate_primary_metric(task_type, primary_metric)
 
     if task_type == "binary_classification":
-        return MetricSpec(primary_metric, ["rank_ic_mean", "auc", "logloss", "topk_return_mean"], True)
+        return MetricSpec(
+            primary_metric, ["rank_ic_mean", "auc", "logloss", "topk_return_mean"], True
+        )
     if task_type == "multiclass_classification":
-        return MetricSpec(primary_metric, ["rank_ic_mean", "topk_return_mean", "macro_f1", "accuracy"], True)
-    return MetricSpec(primary_metric, ["rank_ic_mean", "rmse", "mae", "topk_return_mean"], primary_metric not in {"rmse", "mse", "mae"})
+        return MetricSpec(
+            primary_metric, ["rank_ic_mean", "topk_return_mean", "macro_f1", "accuracy"], True
+        )
+    return MetricSpec(
+        primary_metric,
+        ["rank_ic_mean", "rmse", "mae", "topk_return_mean"],
+        primary_metric not in {"rmse", "mse", "mae"},
+    )
 
 
 def validate_primary_metric(task_type: str, primary_metric: str) -> None:
     valid_metrics = {
-        "binary_classification": {"auto", "rank_ic_mean", "topk_return_mean", "auc", "logloss", "pr_auc"},
-        "multiclass_classification": {"auto", "rank_ic_mean", "topk_return_mean", "macro_f1", "accuracy"},
+        "binary_classification": {
+            "auto",
+            "rank_ic_mean",
+            "topk_return_mean",
+            "auc",
+            "logloss",
+            "pr_auc",
+        },
+        "multiclass_classification": {
+            "auto",
+            "rank_ic_mean",
+            "topk_return_mean",
+            "macro_f1",
+            "accuracy",
+        },
         "regression": {"auto", "rank_ic_mean", "topk_return_mean", "rmse", "mse", "mae"},
     }
     if primary_metric not in valid_metrics.get(task_type, set()):
-        raise ValueError(f"primary_metric '{primary_metric}' is invalid for task_type '{task_type}'")
+        raise ValueError(
+            f"primary_metric '{primary_metric}' is invalid for task_type '{task_type}'"
+        )

@@ -16,6 +16,7 @@
     >>> book.open_position("600036", shares=1000, price=35.0, date="2024-01-01")
     >>> book.get_positions()
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,6 +41,7 @@ class Position:
         realized_pnl: 已实现盈亏
         unrealized_pnl: 未实现盈亏
     """
+
     ticker: str
     shares: int = 0
     avg_cost: float = 0.0
@@ -74,6 +76,7 @@ class PositionBook:
         positions: 持仓字典 {ticker: Position}
         history: 交易历史
     """
+
     initial_cash: float = 100000.0
     cash: float = 100000.0
     positions: Dict[str, Position] = field(default_factory=dict)
@@ -127,14 +130,16 @@ class PositionBook:
             )
 
         # 记录历史
-        self.history.append({
-            "date": date,
-            "ticker": ticker,
-            "action": "buy",
-            "shares": shares,
-            "price": price,
-            "cost": cost,
-        })
+        self.history.append(
+            {
+                "date": date,
+                "ticker": ticker,
+                "action": "buy",
+                "shares": shares,
+                "price": price,
+                "cost": cost,
+            }
+        )
 
         return True
 
@@ -187,15 +192,17 @@ class PositionBook:
             del self.positions[ticker]
 
         # 记录历史
-        self.history.append({
-            "date": date,
-            "ticker": ticker,
-            "action": "sell",
-            "shares": shares,
-            "price": price,
-            "revenue": revenue,
-            "pnl": pnl,
-        })
+        self.history.append(
+            {
+                "date": date,
+                "ticker": ticker,
+                "action": "sell",
+                "shares": shares,
+                "price": price,
+                "revenue": revenue,
+                "pnl": pnl,
+            }
+        )
 
         return True
 
@@ -280,15 +287,17 @@ class PositionBook:
 
         rows = []
         for pos in self.positions.values():
-            rows.append({
-                "ticker": pos.ticker,
-                "shares": pos.shares,
-                "avg_cost": pos.avg_cost,
-                "open_date": pos.open_date,
-                "last_update": pos.last_update,
-                "realized_pnl": pos.realized_pnl,
-                "unrealized_pnl": pos.unrealized_pnl,
-            })
+            rows.append(
+                {
+                    "ticker": pos.ticker,
+                    "shares": pos.shares,
+                    "avg_cost": pos.avg_cost,
+                    "open_date": pos.open_date,
+                    "last_update": pos.last_update,
+                    "realized_pnl": pos.realized_pnl,
+                    "unrealized_pnl": pos.unrealized_pnl,
+                }
+            )
 
         return pd.DataFrame(rows)
 

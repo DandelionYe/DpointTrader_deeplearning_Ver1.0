@@ -8,6 +8,7 @@
 运行测试:
     pytest test_portfolio_builder.py -v
 """
+
 import os
 import sys
 
@@ -15,7 +16,7 @@ import pandas as pd
 import pytest
 
 # 添加父目录到路径以便导入
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from portfolio_builder import (
     PortfolioConfig,
@@ -43,11 +44,13 @@ class TestSelectTopk:
 
     def test_select_topk(self):
         """测试选择 TopK 股票"""
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-01"] * 5),
-            "ticker": ["A", "B", "C", "D", "E"],
-            "score": [0.8, 0.6, 0.9, 0.7, 0.5],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"] * 5),
+                "ticker": ["A", "B", "C", "D", "E"],
+                "score": [0.8, 0.6, 0.9, 0.7, 0.5],
+            }
+        )
 
         topk = select_topk(df, date=pd.to_datetime("2024-01-01"), top_k=3)
 
@@ -56,11 +59,13 @@ class TestSelectTopk:
 
     def test_select_topk_with_min_score(self):
         """测试带最低分数阈值"""
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-01"] * 3),
-            "ticker": ["A", "B", "C"],
-            "score": [0.8, 0.3, 0.9],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"] * 3),
+                "ticker": ["A", "B", "C"],
+                "score": [0.8, 0.3, 0.9],
+            }
+        )
 
         topk = select_topk(df, date=pd.to_datetime("2024-01-01"), top_k=3, min_score=0.5)
 
@@ -115,11 +120,13 @@ class TestBuildPortfolio:
 
     def test_build_portfolio(self):
         """测试构建组合"""
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-01"] * 5),
-            "ticker": ["A", "B", "C", "D", "E"],
-            "score": [0.8, 0.6, 0.9, 0.7, 0.5],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"] * 5),
+                "ticker": ["A", "B", "C", "D", "E"],
+                "score": [0.8, 0.6, 0.9, 0.7, 0.5],
+            }
+        )
 
         config = PortfolioConfig(top_k=3, weighting="equal")
 
@@ -137,11 +144,13 @@ class TestBuildPortfolio:
 
     def test_build_portfolio_reserves_cash_buffer(self):
         """测试组合对象保留现金缓冲"""
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-01"] * 3),
-            "ticker": ["A", "B", "C"],
-            "score": [0.9, 0.8, 0.7],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"] * 3),
+                "ticker": ["A", "B", "C"],
+                "score": [0.9, 0.8, 0.7],
+            }
+        )
 
         config = PortfolioConfig(top_k=3, weighting="equal", cash_buffer=0.10)
         portfolio = build_portfolio(
@@ -155,11 +164,13 @@ class TestBuildPortfolio:
 
     def test_portfolio_respects_max_weight_under_score_weighting(self):
         """测试score-weighting下遵守max_weight约束"""
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-01"] * 5),
-            "ticker": ["A", "B", "C", "D", "E"],
-            "score": [0.9, 0.8, 0.7, 0.6, 0.5],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01"] * 5),
+                "ticker": ["A", "B", "C", "D", "E"],
+                "score": [0.9, 0.8, 0.7, 0.6, 0.5],
+            }
+        )
 
         config = PortfolioConfig(
             top_k=5,

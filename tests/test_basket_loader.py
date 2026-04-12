@@ -102,7 +102,9 @@ class TestDiscoverBasketFiles:
 class TestLoadSingleCsv:
     def test_load_valid_csv(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write('"Date","Open (CNY, qfq)","High (CNY, qfq)","Low (CNY, qfq)","Close (CNY, qfq)","Volume (shares)"\n')
+            f.write(
+                '"Date","Open (CNY, qfq)","High (CNY, qfq)","Low (CNY, qfq)","Close (CNY, qfq)","Volume (shares)"\n'
+            )
             f.write("2024-01-01,10.0,10.5,9.8,10.2,1000\n")
             f.write("2024-01-02,10.2,10.8,10.0,10.5,1200\n")
             temp_path = f.name
@@ -119,7 +121,9 @@ class TestLoadSingleCsv:
 
     def test_load_with_derived_amount(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            f.write('"Date","Open (CNY, qfq)","High (CNY, qfq)","Low (CNY, qfq)","Close (CNY, qfq)","Volume (shares)"\n')
+            f.write(
+                '"Date","Open (CNY, qfq)","High (CNY, qfq)","Low (CNY, qfq)","Close (CNY, qfq)","Volume (shares)"\n'
+            )
             f.write("2024-01-01,10.0,10.5,9.8,10.2,1000\n")
             temp_path = f.name
 

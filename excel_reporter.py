@@ -13,6 +13,7 @@ Excel 报告生成器
     >>> from excel_reporter import save_to_excel
     >>> save_to_excel("output.xlsx", backtest_result, scores_df)
 """
+
 from __future__ import annotations
 
 import logging
@@ -110,18 +111,12 @@ def save_to_excel(
 
         # 配置
         if config:
-            config_df = pd.DataFrame(
-                list(config.items()),
-                columns=["key", "value"]
-            )
+            config_df = pd.DataFrame(list(config.items()), columns=["key", "value"])
             config_df.to_excel(writer, sheet_name="Config", index=False)
 
         # 指标
         if metrics:
-            metrics_df = pd.DataFrame(
-                list(metrics.items()),
-                columns=["metric", "value"]
-            )
+            metrics_df = pd.DataFrame(list(metrics.items()), columns=["metric", "value"])
             metrics_df.to_excel(writer, sheet_name="Metrics", index=False)
 
         if execution_stats:
@@ -165,13 +160,15 @@ def save_basket_manifest(
     """
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         # 基本信息
-        info_df = pd.DataFrame({
-            "basket_name": [basket_name],
-            "basket_path": [basket_path],
-            "n_tickers": [n_tickers],
-            "date_start": [date_range[0] if date_range else None],
-            "date_end": [date_range[1] if date_range else None],
-        })
+        info_df = pd.DataFrame(
+            {
+                "basket_name": [basket_name],
+                "basket_path": [basket_path],
+                "n_tickers": [n_tickers],
+                "date_start": [date_range[0] if date_range else None],
+                "date_end": [date_range[1] if date_range else None],
+            }
+        )
         info_df.to_excel(writer, sheet_name="BasketInfo", index=False)
 
         # ticker 列表

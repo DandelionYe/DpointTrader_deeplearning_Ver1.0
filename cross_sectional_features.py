@@ -19,6 +19,7 @@
     >>> from cross_sectional_features import add_cross_sectional_features
     >>> panel_df = add_cross_sectional_features(panel_df, columns=["close_qfq", "volume"])
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ class CrossSectionalMeta:
         n_tickers: 股票数
         notes: 注释
     """
+
     cross_sectional_features: List[str] = field(default_factory=list)
     n_dates: int = 0
     n_tickers: int = 0
@@ -74,6 +76,7 @@ def cross_sectional_rank(
     Returns:
         rank Series 或修改后的 DataFrame
     """
+
     def rank_func(group):
         return group[value_col].rank(method=method, ascending=ascending)
 
@@ -118,6 +121,7 @@ def cross_sectional_zscore(
     Returns:
         zscore Series 或修改后的 DataFrame
     """
+
     def zscore_func(group):
         values = group[value_col]
         mu = values.mean()
@@ -169,6 +173,7 @@ def cross_sectional_percentile(
     Returns:
         percentile Series 或修改后的 DataFrame
     """
+
     def percentile_func(group):
         values = group[value_col]
         n = len(values)
@@ -180,7 +185,9 @@ def cross_sectional_percentile(
         return percentiles
 
     # 使用 include_groups=False 避免 pandas 新版本警告
-    percentiles = panel_df.groupby(date_col, group_keys=False).apply(percentile_func, include_groups=False)
+    percentiles = panel_df.groupby(date_col, group_keys=False).apply(
+        percentile_func, include_groups=False
+    )
 
     if output_col:
         result = panel_df.copy()
@@ -217,12 +224,11 @@ def cross_sectional_industry_rank(
     Returns:
         industry rank Series 或修改后的 DataFrame
     """
+
     def industry_rank_func(group):
         return group[value_col].rank(method="average", ascending=False)
 
-    ranks = panel_df.groupby([date_col, industry_col], group_keys=False).apply(
-        industry_rank_func
-    )
+    ranks = panel_df.groupby([date_col, industry_col], group_keys=False).apply(industry_rank_func)
 
     if output_col:
         result = panel_df.copy()

@@ -61,7 +61,9 @@ def test_prepare_scores_for_backtest_drops_untradable_terminal_signal():
         }
     )
 
-    prepared = prepare_scores_for_backtest(panel_df, scores_df, execution_lag_days=1, drop_untradable_signals=True)
+    prepared = prepare_scores_for_backtest(
+        panel_df, scores_df, execution_lag_days=1, drop_untradable_signals=True
+    )
     assert prepared.empty
 
 
@@ -141,7 +143,9 @@ def test_backtest_marks_to_market_every_panel_date():
         }
     )
     prepared_scores = prepare_scores_for_backtest(panel_df, scores_df)
-    config = PortfolioConfig(top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily")
+    config = PortfolioConfig(
+        top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily"
+    )
     result = backtest_from_scores(
         panel_df,
         prepared_scores,
@@ -166,15 +170,22 @@ def test_monthly_rebalance_gates_order_generation():
     daily_result = backtest_from_scores(
         panel_df,
         prepared_scores,
-        portfolio_config=PortfolioConfig(top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily"),
+        portfolio_config=PortfolioConfig(
+            top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily"
+        ),
     )
     monthly_result = backtest_from_scores(
         panel_df,
         prepared_scores,
-        portfolio_config=PortfolioConfig(top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="monthly"),
+        portfolio_config=PortfolioConfig(
+            top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="monthly"
+        ),
     )
     assert len(monthly_result.orders) < len(daily_result.orders)
-    assert monthly_result.equity_curve["is_rebalance_day"].sum() < daily_result.equity_curve["is_rebalance_day"].sum()
+    assert (
+        monthly_result.equity_curve["is_rebalance_day"].sum()
+        < daily_result.equity_curve["is_rebalance_day"].sum()
+    )
 
 
 def test_backtest_requires_prepared_scores():
@@ -191,12 +202,16 @@ def test_backtest_requires_prepared_scores():
         backtest_from_scores(
             panel_df,
             raw_scores,
-            portfolio_config=PortfolioConfig(top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily"),
+            portfolio_config=PortfolioConfig(
+                top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily"
+            ),
         )
     except ValueError as exc:
         assert "prepared columns" in str(exc)
     else:
-        raise AssertionError("backtest_from_scores should reject raw scores without trade_date/signal_date")
+        raise AssertionError(
+            "backtest_from_scores should reject raw scores without trade_date/signal_date"
+        )
 
 
 def test_validate_prepared_scores_rejects_missing_trade_date():
@@ -228,7 +243,9 @@ def test_backtest_without_execution_price_only_marks_to_market_no_order():
     result = backtest_from_scores(
         panel_df,
         prepared_scores,
-        portfolio_config=PortfolioConfig(top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily"),
+        portfolio_config=PortfolioConfig(
+            top_k=1, weighting="score", max_weight=1.0, cash_buffer=0.0, rebalance_freq="daily"
+        ),
     )
 
     assert result.orders.empty

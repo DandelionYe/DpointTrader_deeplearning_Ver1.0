@@ -4,6 +4,7 @@ P2: 结果比对工具
 
 支持两次 run 的配置与指标差异对比
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,11 +67,13 @@ def compare_configs(config1: Dict[str, Any], config2: Dict[str, Any]) -> list:
             v1 = s1.get(key)
             v2 = s2.get(key)
             if v1 != v2:
-                differences.append([
-                    f"{section}.{key}",
-                    str(v1),
-                    str(v2),
-                ])
+                differences.append(
+                    [
+                        f"{section}.{key}",
+                        str(v1),
+                        str(v2),
+                    ]
+                )
 
     return differences
 
@@ -101,13 +104,15 @@ def compare_metrics(metrics1: Dict[str, Any], metrics2: Dict[str, Any]) -> list:
         try:
             diff = v2 - v1
             diff_pct = f"{diff / v1 * 100:+.2f}%" if v1 != 0 else "N/A"
-            comparisons.append([
-                key,
-                f"{v1:.6f}" if isinstance(v1, float) else str(v1),
-                f"{v2:.6f}" if isinstance(v2, float) else str(v2),
-                f"{diff:+.6f}",
-                diff_pct,
-            ])
+            comparisons.append(
+                [
+                    key,
+                    f"{v1:.6f}" if isinstance(v1, float) else str(v1),
+                    f"{v2:.6f}" if isinstance(v2, float) else str(v2),
+                    f"{diff:+.6f}",
+                    diff_pct,
+                ]
+            )
         except TypeError:
             # 非数值型指标（如字符串）跳过差值计算
             comparisons.append([key, str(v1), str(v2), "N/A", "N/A"])
@@ -123,13 +128,27 @@ def compare_seeds(exp1: Dict[str, Any], exp2: Dict[str, Any]) -> list:
     m2 = exp2.get("manifest", {})
 
     comparisons.append(["seed", str(m1.get("seed")), str(m2.get("seed"))])
-    comparisons.append(["git_commit", m1.get("git_commit_hash", "unknown")[:12], m2.get("git_commit_hash", "unknown")[:12]])
+    comparisons.append(
+        [
+            "git_commit",
+            m1.get("git_commit_hash", "unknown")[:12],
+            m2.get("git_commit_hash", "unknown")[:12],
+        ]
+    )
     comparisons.append(["timestamp", m1.get("created_at"), m2.get("created_at")])
 
     data1 = m1.get("data", {})
     data2 = m2.get("data", {})
-    comparisons.append(["data_hash", data1.get("data_hash", "unknown")[:16], data2.get("data_hash", "unknown")[:16]])
-    comparisons.append(["data_path", data1.get("data_path", "unknown"), data2.get("data_path", "unknown")])
+    comparisons.append(
+        [
+            "data_hash",
+            data1.get("data_hash", "unknown")[:16],
+            data2.get("data_hash", "unknown")[:16],
+        ]
+    )
+    comparisons.append(
+        ["data_path", data1.get("data_path", "unknown"), data2.get("data_path", "unknown")]
+    )
     comparisons.append(["n_rows", str(data1.get("n_rows")), str(data2.get("n_rows"))])
 
     pv1 = m1.get("package_versions", {})
@@ -149,7 +168,9 @@ def main():
     parser = argparse.ArgumentParser(description="Compare two experiment runs")
     parser.add_argument("--exp1", type=str, required=True, help="First experiment directory")
     parser.add_argument("--exp2", type=str, required=True, help="Second experiment directory")
-    parser.add_argument("--output_dir", type=str, default="./output", help="Output directory for experiments")
+    parser.add_argument(
+        "--output_dir", type=str, default="./output", help="Output directory for experiments"
+    )
 
     args = parser.parse_args()
 
@@ -194,7 +215,11 @@ def main():
     m2 = exp2_data.get("manifest", {}).get("metrics", {})
     metrics_table = compare_metrics(m1, m2)
     if metrics_table:
-        print(tabulate(metrics_table, headers=["Metric", "Exp1", "Exp2", "Diff", "Diff %"], tablefmt="grid"))
+        print(
+            tabulate(
+                metrics_table, headers=["Metric", "Exp1", "Exp2", "Diff", "Diff %"], tablefmt="grid"
+            )
+        )
     else:
         print("No metrics available for comparison")
     print()
@@ -206,7 +231,11 @@ def main():
     c2 = exp2_data.get("config", {})
     config_diff = compare_configs(c1, c2)
     if config_diff:
-        print(tabulate(config_diff, headers=["Config Key", "Exp1 Value", "Exp2 Value"], tablefmt="grid"))
+        print(
+            tabulate(
+                config_diff, headers=["Config Key", "Exp1 Value", "Exp2 Value"], tablefmt="grid"
+            )
+        )
     else:
         print("No config differences found")
     print()

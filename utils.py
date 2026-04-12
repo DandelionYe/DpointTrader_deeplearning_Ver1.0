@@ -46,7 +46,9 @@ def get_package_versions() -> Dict[str, str]:
             versions[pkg] = getattr(mod, "__version__", "unknown")
         except ImportError:
             versions[pkg] = "not_installed"
-    versions["python"] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    versions["python"] = (
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
     return versions
 
 
@@ -151,7 +153,9 @@ def create_manifest(
     if contracts is not None:
         manifest["contracts"] = contracts
         data_section = cast(Dict[str, Any], manifest["data"])
-        data_section["data_hash"] = data_section.get("data_hash") or contracts.get("data", {}).get("data_hash")
+        data_section["data_hash"] = data_section.get("data_hash") or contracts.get("data", {}).get(
+            "data_hash"
+        )
 
     if best_config is not None:
         manifest["best_config"] = best_config

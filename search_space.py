@@ -71,7 +71,9 @@ def build_base_model_config(args: argparse.Namespace) -> Dict[str, Any]:
         if sequence_batch_size == GENERIC_BATCH_SIZE_DEFAULT:
             sequence_batch_size = SEQUENCE_BATCH_SIZE_DEFAULT
     if args.model_type == "mlp":
-        hidden_dims = [int(part.strip()) for part in str(args.hidden_dims).split(",") if part.strip()]
+        hidden_dims = [
+            int(part.strip()) for part in str(args.hidden_dims).split(",") if part.strip()
+        ]
         if not hidden_dims:
             hidden_dims = [args.hidden_dim]
         return {
@@ -145,7 +147,9 @@ def build_base_model_config(args: argparse.Namespace) -> Dict[str, Any]:
             "num_layers": args.num_layers,
             "bidirectional": bool(args.bidirectional),
             "num_filters": args.num_filters,
-            "kernel_sizes": [int(part.strip()) for part in str(args.kernel_sizes).split(",") if part.strip()],
+            "kernel_sizes": [
+                int(part.strip()) for part in str(args.kernel_sizes).split(",") if part.strip()
+            ],
             "d_model": args.d_model,
             "nhead": args.nhead,
             "dim_feedforward": args.dim_feedforward,
@@ -175,7 +179,9 @@ def sample_model_config(
 def _sample_mlp_config(rng: np.random.RandomState, base_config: Dict[str, Any]) -> Dict[str, Any]:
     base_params = deepcopy(base_config.get("model_params", {}))
     learning_rate = float(np.exp(rng.uniform(np.log(MLP_LR_MIN), np.log(MLP_LR_MAX))))
-    weight_decay = float(np.exp(rng.uniform(np.log(MLP_WEIGHT_DECAY_MIN), np.log(MLP_WEIGHT_DECAY_MAX))))
+    weight_decay = float(
+        np.exp(rng.uniform(np.log(MLP_WEIGHT_DECAY_MIN), np.log(MLP_WEIGHT_DECAY_MAX)))
+    )
     config = deepcopy(base_config)
     config["model_type"] = "mlp"
     config["device"] = base_config.get("device", "auto")
@@ -189,8 +195,12 @@ def _sample_mlp_config(rng: np.random.RandomState, base_config: Dict[str, Any]) 
         "predict_batch_size": base_params.get("predict_batch_size", 0),
         "auto_batch_tune": base_params.get("auto_batch_tune", True),
         "target_vram_util": base_params.get("target_vram_util", 0.88),
-        "train_target_vram_util": base_params.get("train_target_vram_util", base_params.get("target_vram_util", 0.88)),
-        "predict_target_vram_util": base_params.get("predict_target_vram_util", base_params.get("target_vram_util", 0.88)),
+        "train_target_vram_util": base_params.get(
+            "train_target_vram_util", base_params.get("target_vram_util", 0.88)
+        ),
+        "predict_target_vram_util": base_params.get(
+            "predict_target_vram_util", base_params.get("target_vram_util", 0.88)
+        ),
         "use_amp": base_params.get("use_amp", False),
         "use_tf32": base_params.get("use_tf32", False),
     }
@@ -208,25 +218,39 @@ def _sample_xgb_config(rng: np.random.RandomState, base_config: Dict[str, Any]) 
         "max_depth": XGB_MAX_DEPTH_OPTIONS[rng.randint(0, len(XGB_MAX_DEPTH_OPTIONS))],
         "learning_rate": XGB_LR_OPTIONS[rng.randint(0, len(XGB_LR_OPTIONS))],
         "subsample": XGB_SUBSAMPLE_OPTIONS[rng.randint(0, len(XGB_SUBSAMPLE_OPTIONS))],
-        "colsample_bytree": XGB_COLSAMPLE_BYTREE_OPTIONS[rng.randint(0, len(XGB_COLSAMPLE_BYTREE_OPTIONS))],
-        "min_child_weight": XGB_MIN_CHILD_WEIGHT_OPTIONS[rng.randint(0, len(XGB_MIN_CHILD_WEIGHT_OPTIONS))],
+        "colsample_bytree": XGB_COLSAMPLE_BYTREE_OPTIONS[
+            rng.randint(0, len(XGB_COLSAMPLE_BYTREE_OPTIONS))
+        ],
+        "min_child_weight": XGB_MIN_CHILD_WEIGHT_OPTIONS[
+            rng.randint(0, len(XGB_MIN_CHILD_WEIGHT_OPTIONS))
+        ],
         "n_jobs": cpu_threads,
         "tree_method": "hist",
         "eval_metric": (
-            "rmse" if config.get("task_type") == "regression" else "mlogloss" if config.get("task_type") == "multiclass_classification" else "logloss"
+            "rmse"
+            if config.get("task_type") == "regression"
+            else "mlogloss"
+            if config.get("task_type") == "multiclass_classification"
+            else "logloss"
         ),
         "verbosity": 0,
     }
     return config
 
 
-def _sample_rnn_config(model_type: str, rng: np.random.RandomState, base_config: Dict[str, Any]) -> Dict[str, Any]:
+def _sample_rnn_config(
+    model_type: str, rng: np.random.RandomState, base_config: Dict[str, Any]
+) -> Dict[str, Any]:
     params = deepcopy(base_config.get("model_params", {}))
     params["hidden_dim"] = int(rng.choice([16, 32, 64, int(params.get("hidden_dim", 32))]))
     params["num_layers"] = int(rng.choice([1, 2, int(params.get("num_layers", 2))]))
-    params["dropout_rate"] = float(rng.choice([0.05, 0.10, 0.20, float(params.get("dropout_rate", 0.1))]))
+    params["dropout_rate"] = float(
+        rng.choice([0.05, 0.10, 0.20, float(params.get("dropout_rate", 0.1))])
+    )
     params["bidirectional"] = bool(rng.choice([False, True]))
-    params["batch_size"] = int(rng.choice(SEQUENCE_BATCH_SIZE_OPTIONS + [int(params.get("batch_size", 64))]))
+    params["batch_size"] = int(
+        rng.choice(SEQUENCE_BATCH_SIZE_OPTIONS + [int(params.get("batch_size", 64))])
+    )
     config = deepcopy(base_config)
     config["model_type"] = model_type
     config["device"] = base_config.get("device", "cpu")
@@ -238,9 +262,15 @@ def _sample_cnn_config(rng: np.random.RandomState, base_config: Dict[str, Any]) 
     params = deepcopy(base_config.get("model_params", {}))
     params["num_filters"] = int(rng.choice([16, 32, 64, int(params.get("num_filters", 32))]))
     kernel_options = [[2, 3], [3, 5], [2, 3, 5]]
-    params["kernel_sizes"] = list(kernel_options[int(rng.choice(len(kernel_options), p=[0.3, 0.3, 0.4]))])
-    params["dropout_rate"] = float(rng.choice([0.05, 0.10, 0.20, float(params.get("dropout_rate", 0.1))]))
-    params["batch_size"] = int(rng.choice(SEQUENCE_BATCH_SIZE_OPTIONS + [int(params.get("batch_size", 64))]))
+    params["kernel_sizes"] = list(
+        kernel_options[int(rng.choice(len(kernel_options), p=[0.3, 0.3, 0.4]))]
+    )
+    params["dropout_rate"] = float(
+        rng.choice([0.05, 0.10, 0.20, float(params.get("dropout_rate", 0.1))])
+    )
+    params["batch_size"] = int(
+        rng.choice(SEQUENCE_BATCH_SIZE_OPTIONS + [int(params.get("batch_size", 64))])
+    )
     config = deepcopy(base_config)
     config["model_type"] = "cnn"
     config["device"] = base_config.get("device", "cpu")
@@ -248,14 +278,20 @@ def _sample_cnn_config(rng: np.random.RandomState, base_config: Dict[str, Any]) 
     return config
 
 
-def _sample_transformer_config(rng: np.random.RandomState, base_config: Dict[str, Any]) -> Dict[str, Any]:
+def _sample_transformer_config(
+    rng: np.random.RandomState, base_config: Dict[str, Any]
+) -> Dict[str, Any]:
     params = deepcopy(base_config.get("model_params", {}))
     params["d_model"] = int(rng.choice([32, 64, int(params.get("d_model", 64))]))
     params["nhead"] = int(rng.choice([2, 4, int(params.get("nhead", 4))]))
     params["num_layers"] = int(rng.choice([1, 2, int(params.get("num_layers", 2))]))
     params["dim_feedforward"] = int(rng.choice([64, 128, int(params.get("dim_feedforward", 128))]))
-    params["dropout_rate"] = float(rng.choice([0.05, 0.10, 0.20, float(params.get("dropout_rate", 0.1))]))
-    params["batch_size"] = int(rng.choice(SEQUENCE_BATCH_SIZE_OPTIONS + [int(params.get("batch_size", 64))]))
+    params["dropout_rate"] = float(
+        rng.choice([0.05, 0.10, 0.20, float(params.get("dropout_rate", 0.1))])
+    )
+    params["batch_size"] = int(
+        rng.choice(SEQUENCE_BATCH_SIZE_OPTIONS + [int(params.get("batch_size", 64))])
+    )
     config = deepcopy(base_config)
     config["model_type"] = "transformer"
     config["device"] = base_config.get("device", "cpu")
@@ -275,15 +311,24 @@ def mutate_model_config(
     if model_type == "mlp":
         if "learning_rate" in params:
             lr = float(params["learning_rate"])
-            params["learning_rate"] = max(MLP_LR_MIN, min(MLP_LR_MAX, lr + rng.uniform(-lr * strength, lr * strength)))
+            params["learning_rate"] = max(
+                MLP_LR_MIN, min(MLP_LR_MAX, lr + rng.uniform(-lr * strength, lr * strength))
+            )
         if "dropout_rate" in params:
             dr = float(params["dropout_rate"])
-            params["dropout_rate"] = max(0.01, min(0.5, dr + rng.uniform(-dr * strength, dr * strength)))
+            params["dropout_rate"] = max(
+                0.01, min(0.5, dr + rng.uniform(-dr * strength, dr * strength))
+            )
         if "weight_decay" in params:
             wd = float(params["weight_decay"])
-            params["weight_decay"] = max(MLP_WEIGHT_DECAY_MIN, min(MLP_WEIGHT_DECAY_MAX, wd + rng.uniform(-wd * strength, wd * strength)))
+            params["weight_decay"] = max(
+                MLP_WEIGHT_DECAY_MIN,
+                min(MLP_WEIGHT_DECAY_MAX, wd + rng.uniform(-wd * strength, wd * strength)),
+            )
     elif model_type == "xgb":
         if "learning_rate" in params:
             lr = float(params["learning_rate"])
-            params["learning_rate"] = max(0.01, min(0.3, lr + rng.uniform(-lr * strength, lr * strength)))
+            params["learning_rate"] = max(
+                0.01, min(0.3, lr + rng.uniform(-lr * strength, lr * strength))
+            )
     return mutated

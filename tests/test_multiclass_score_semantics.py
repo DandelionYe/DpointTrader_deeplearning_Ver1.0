@@ -50,7 +50,9 @@ def test_predict_panel_multiclass_uses_expected_score_and_bullish_probability():
     expected_probs = model.predict_proba(None)
 
     assert out["probability_available"].eq(True).all()
-    assert np.allclose(out["score"].to_numpy(), multiclass_probabilities_to_score(expected_probs), atol=1e-6)
+    assert np.allclose(
+        out["score"].to_numpy(), multiclass_probabilities_to_score(expected_probs), atol=1e-6
+    )
     assert np.allclose(out["proba_up"].to_numpy(), expected_probs[:, -1], atol=1e-6)
     assert np.array_equal(out["prediction"].to_numpy(), np.argmax(expected_probs, axis=1))
     assert np.allclose(out["raw_output"].to_numpy(), np.max(expected_probs, axis=1), atol=1e-6)

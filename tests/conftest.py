@@ -5,6 +5,7 @@ Basket 模式测试夹具
 
 提供测试所需的样本数据和配置。
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -28,19 +29,25 @@ def minimal_basket_data():
         returns = np.random.normal(0.0005, 0.02, n)
         close_prices = base_price * np.exp(np.cumsum(returns))
         open_prices = close_prices * (1 + np.random.uniform(-0.01, 0.01, n))
-        high_prices = np.maximum(open_prices, close_prices) * (1 + np.abs(np.random.uniform(0, 0.02, n)))
-        low_prices = np.minimum(open_prices, close_prices) * (1 - np.abs(np.random.uniform(0, 0.02, n)))
+        high_prices = np.maximum(open_prices, close_prices) * (
+            1 + np.abs(np.random.uniform(0, 0.02, n))
+        )
+        low_prices = np.minimum(open_prices, close_prices) * (
+            1 - np.abs(np.random.uniform(0, 0.02, n))
+        )
         volumes = np.random.uniform(1_000_000, 10_000_000, n)
 
-        df = pd.DataFrame({
-            "date": dates,
-            "ticker": ticker,
-            "open_qfq": open_prices,
-            "high_qfq": high_prices,
-            "low_qfq": low_prices,
-            "close_qfq": close_prices,
-            "volume": volumes,
-        })
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "ticker": ticker,
+                "open_qfq": open_prices,
+                "high_qfq": high_prices,
+                "low_qfq": low_prices,
+                "close_qfq": close_prices,
+                "volume": volumes,
+            }
+        )
         frames.append(df)
 
     return pd.concat(frames, ignore_index=True)
@@ -60,20 +67,24 @@ def minimal_price_data():
     returns = np.random.normal(0.0005, 0.02, n)
     close_prices = base_price * np.exp(np.cumsum(returns))
     open_prices = close_prices * (1 + np.random.uniform(-0.01, 0.01, n))
-    high_prices = np.maximum(open_prices, close_prices) * (1 + np.abs(np.random.uniform(0, 0.02, n)))
+    high_prices = np.maximum(open_prices, close_prices) * (
+        1 + np.abs(np.random.uniform(0, 0.02, n))
+    )
     low_prices = np.minimum(open_prices, close_prices) * (1 - np.abs(np.random.uniform(0, 0.02, n)))
     volumes = np.random.uniform(1_000_000, 10_000_000, n)
     amounts = volumes * close_prices
 
-    df = pd.DataFrame({
-        "date": dates,
-        "open_qfq": open_prices,
-        "high_qfq": high_prices,
-        "low_qfq": low_prices,
-        "close_qfq": close_prices,
-        "volume": volumes,
-        "amount": amounts,
-    })
+    df = pd.DataFrame(
+        {
+            "date": dates,
+            "open_qfq": open_prices,
+            "high_qfq": high_prices,
+            "low_qfq": low_prices,
+            "close_qfq": close_prices,
+            "volume": volumes,
+            "amount": amounts,
+        }
+    )
 
     return df
 
@@ -84,6 +95,7 @@ def sample_portfolio_config():
     Sample portfolio configuration for testing.
     """
     from portfolio_builder import PortfolioConfig
+
     return PortfolioConfig(
         top_k=3,
         weighting="equal",
@@ -110,18 +122,24 @@ def temp_basket_dir(tmp_path):
         returns = np.random.normal(0.0005, 0.02, n)
         close_prices = base_price * np.exp(np.cumsum(returns))
         open_prices = close_prices * (1 + np.random.uniform(-0.01, 0.01, n))
-        high_prices = np.maximum(open_prices, close_prices) * (1 + np.abs(np.random.uniform(0, 0.02, n)))
-        low_prices = np.minimum(open_prices, close_prices) * (1 - np.abs(np.random.uniform(0, 0.02, n)))
+        high_prices = np.maximum(open_prices, close_prices) * (
+            1 + np.abs(np.random.uniform(0, 0.02, n))
+        )
+        low_prices = np.minimum(open_prices, close_prices) * (
+            1 - np.abs(np.random.uniform(0, 0.02, n))
+        )
         volumes = np.random.uniform(1_000_000, 10_000_000, n)
 
-        df = pd.DataFrame({
-            "Date": dates,
-            "Open (CNY qfq)": open_prices,
-            "High (CNY qfq)": high_prices,
-            "Low (CNY qfq)": low_prices,
-            "Close (CNY qfq)": close_prices,
-            "Volume (shares)": volumes,
-        })
+        df = pd.DataFrame(
+            {
+                "Date": dates,
+                "Open (CNY qfq)": open_prices,
+                "High (CNY qfq)": high_prices,
+                "Low (CNY qfq)": low_prices,
+                "Close (CNY qfq)": close_prices,
+                "Volume (shares)": volumes,
+            }
+        )
         df.to_csv(basket_dir / f"{ticker}.csv", index=False)
 
     return str(basket_dir)

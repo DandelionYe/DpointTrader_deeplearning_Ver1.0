@@ -71,7 +71,9 @@ class RollingRetrainer:
             current += pd.DateOffset(months=1)
         return retrain_dates
 
-    def get_training_window(self, panel_df: pd.DataFrame, retrain_date: pd.Timestamp) -> pd.DataFrame:
+    def get_training_window(
+        self, panel_df: pd.DataFrame, retrain_date: pd.Timestamp
+    ) -> pd.DataFrame:
         if self.config.window_type == "expanding":
             return panel_df[panel_df["date"] <= retrain_date].copy()
         if self.config.window_type == "rolling":
@@ -118,7 +120,9 @@ class RollingRetrainer:
         )
         if not train_X.empty:
             assert pd.Timestamp(train_X["date"].max()) <= pd.Timestamp(retrain_date)
-            assert pd.Timestamp(train_label_meta["label_end_date"].max()) <= pd.Timestamp(retrain_date)
+            assert pd.Timestamp(train_label_meta["label_end_date"].max()) <= pd.Timestamp(
+                retrain_date
+            )
         return train_X, train_y, train_label_meta
 
     def _build_evaluation_snapshot(
@@ -155,7 +159,9 @@ class RollingRetrainer:
         eval_label_meta = eval_label_meta_full.loc[eval_X.index].copy()
         if not eval_X.empty:
             assert pd.Timestamp(eval_X["date"].min()) > pd.Timestamp(retrain_date)
-            assert pd.Timestamp(eval_label_meta["label_end_date"].max()) <= pd.Timestamp(eval_end_date)
+            assert pd.Timestamp(eval_label_meta["label_end_date"].max()) <= pd.Timestamp(
+                eval_end_date
+            )
         return eval_X, eval_y, eval_label_meta
 
     def run(self, panel_df: pd.DataFrame, args: argparse.Namespace) -> List[SnapshotManifest]:
@@ -173,15 +179,30 @@ class RollingRetrainer:
 
         snapshots: List[SnapshotManifest] = []
         for snapshot_idx, retrain_date in enumerate(retrain_dates):
-            logger.info("=== Snapshot %d/%d: retrain_date=%s ===", snapshot_idx + 1, len(retrain_dates), retrain_date)
-            next_retrain_date = retrain_dates[snapshot_idx + 1] if snapshot_idx + 1 < len(retrain_dates) else None
-            eval_end_date = next_retrain_date if next_retrain_date is not None else pd.Timestamp(panel_df["date"].max())
+            logger.info(
+                "=== Snapshot %d/%d: retrain_date=%s ===",
+                snapshot_idx + 1,
+                len(retrain_dates),
+                retrain_date,
+            )
+            next_retrain_date = (
+                retrain_dates[snapshot_idx + 1] if snapshot_idx + 1 < len(retrain_dates) else None
+            )
+            eval_end_date = (
+                next_retrain_date
+                if next_retrain_date is not None
+                else pd.Timestamp(panel_df["date"].max())
+            )
             train_panel = self.get_training_window(panel_df, retrain_date)
-            eval_panel = panel_df[(panel_df["date"] > retrain_date) & (panel_df["date"] <= eval_end_date)].copy()
+            eval_panel = panel_df[
+                (panel_df["date"] > retrain_date) & (panel_df["date"] <= eval_end_date)
+            ].copy()
             if train_panel.empty:
                 continue
             if eval_panel.empty:
-                logger.info("Skipping snapshot %s because no forward evaluation data exists", retrain_date)
+                logger.info(
+                    "Skipping snapshot %s because no forward evaluation data exists", retrain_date
+                )
                 continue
 
             feature_config = build_feature_config(args)
@@ -206,7 +227,9 @@ class RollingRetrainer:
 
             search_args = deepcopy(args)
             search_args.use_holdout = 0
-            split_plan = build_split_plan(train_X, train_y, search_args, date_col="date", ticker_col="ticker")
+            split_plan = build_split_plan(
+                train_X, train_y, search_args, date_col="date", ticker_col="ticker"
+            )
             indexed_splits = split_plan["indexed_splits"]
             search_X = split_plan["search_X"]
             search_y = split_plan["search_y"]
@@ -290,7 +313,9 @@ class RollingRetrainer:
                 ticker_col="ticker",
                 config=search_result.best_config,
             )
-            metrics["search_rank_ic_mean"] = float(search_result.best_metrics.get("rank_ic_mean", 0.0))
+            metrics["search_rank_ic_mean"] = float(
+                search_result.best_metrics.get("rank_ic_mean", 0.0)
+            )
             metrics["final_rank_ic_mean"] = float(metrics.get("rank_ic_mean", 0.0))
             metrics["evaluation_split"] = "forward_eval"
             metrics["evaluation_start_date"] = str(scores_df["trade_date"].min())
@@ -298,7 +323,9 @@ class RollingRetrainer:
             metrics["raw_signals"] = int(prep_stats.get("raw_signals", 0))
             metrics["prepared_signals"] = int(prep_stats.get("prepared_signals", 0))
             metrics["dropped_signals"] = int(prep_stats.get("dropped_signals", 0))
-            metrics["execution_lag_days"] = int(prep_stats.get("execution_lag_days", getattr(args, "execution_lag_days", 1)))
+            metrics["execution_lag_days"] = int(
+                prep_stats.get("execution_lag_days", getattr(args, "execution_lag_days", 1))
+            )
             metrics["train_sample_date_max"] = str(train_X["date"].max())
             metrics["train_label_end_date_max"] = str(train_label_meta["label_end_date"].max())
             metrics["eval_sample_date_min"] = str(eval_X["date"].min())

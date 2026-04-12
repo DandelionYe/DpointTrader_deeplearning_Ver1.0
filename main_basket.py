@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import glob
@@ -79,7 +79,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data_root", type=str, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--basket_path", type=str, default=None)
     parser.add_argument("--file_pattern", type=str, default=DEFAULT_FILE_PATTERN)
-    parser.add_argument("--ticker_from", type=str, choices=["filename", "manifest"], default="filename")
+    parser.add_argument(
+        "--ticker_from", type=str, choices=["filename", "manifest"], default="filename"
+    )
     parser.add_argument("--output_dir", type=str, default="./output_basket")
 
     parser.add_argument("--runs", type=int, default=50)
@@ -87,9 +89,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n_folds", type=int, default=4)
 
     parser.add_argument("--top_k", type=int, default=DEFAULT_TOP_K)
-    parser.add_argument("--rebalance_freq", type=str, choices=["daily", "weekly", "monthly"], default=DEFAULT_REBALANCE_FREQ)
+    parser.add_argument(
+        "--rebalance_freq",
+        type=str,
+        choices=["daily", "weekly", "monthly"],
+        default=DEFAULT_REBALANCE_FREQ,
+    )
     parser.add_argument("--rebalance_anchor", type=str, choices=["first", "last"], default="first")
-    parser.add_argument("--weighting", type=str, choices=["equal", "score", "vol_inv"], default=DEFAULT_WEIGHTING)
+    parser.add_argument(
+        "--weighting", type=str, choices=["equal", "score", "vol_inv"], default=DEFAULT_WEIGHTING
+    )
     parser.add_argument("--max_weight", type=float, default=DEFAULT_MAX_WEIGHT)
     parser.add_argument("--cash_buffer", type=float, default=0.05)
 
@@ -100,7 +109,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include_cross_section", type=int, default=1)
 
     parser.add_argument("--initial_cash", type=float, default=100000.0)
-    parser.add_argument("--benchmark_mode", choices=["none", "equal_weight"], default="equal_weight")
+    parser.add_argument(
+        "--benchmark_mode", choices=["none", "equal_weight"], default="equal_weight"
+    )
     parser.add_argument("--execution_lag_days", type=int, default=1)
     parser.add_argument("--research_start_date", type=str, default=None)
     parser.add_argument("--research_end_date", type=str, default=None)
@@ -200,7 +211,9 @@ def _next_continue_run_id(experiment_dir: str) -> int:
 
 
 def create_continue_run_dir(base_experiment_dir: str) -> str:
-    continue_dir = os.path.join(base_experiment_dir, f"continue_run_{_next_continue_run_id(base_experiment_dir):03d}")
+    continue_dir = os.path.join(
+        base_experiment_dir, f"continue_run_{_next_continue_run_id(base_experiment_dir):03d}"
+    )
     os.makedirs(continue_dir, exist_ok=True)
     os.makedirs(os.path.join(continue_dir, "models"), exist_ok=True)
     os.makedirs(os.path.join(continue_dir, "artifacts"), exist_ok=True)
@@ -217,7 +230,11 @@ def log_runtime_status(args: argparse.Namespace) -> None:
         torch_info.get("device_count"),
         torch_info.get("device_name"),
     )
-    if args.model_type == "mlp" and args.device in {"auto", "cuda"} and not torch_info.get("cuda_available"):
+    if (
+        args.model_type == "mlp"
+        and args.device in {"auto", "cuda"}
+        and not torch_info.get("cuda_available")
+    ):
         logger.warning(
             "GPU will not be used because the current PyTorch runtime has no CUDA support. Current torch build: %s",
             torch_info.get("torch_version"),
@@ -295,7 +312,9 @@ def build_model_config(args: argparse.Namespace) -> Dict[str, Any]:
         if sequence_batch_size == GENERIC_BATCH_SIZE_DEFAULT:
             sequence_batch_size = SEQUENCE_BATCH_SIZE_DEFAULT
     if args.model_type == "mlp":
-        hidden_dims = [int(part.strip()) for part in str(args.hidden_dims).split(",") if part.strip()]
+        hidden_dims = [
+            int(part.strip()) for part in str(args.hidden_dims).split(",") if part.strip()
+        ]
         if not hidden_dims:
             hidden_dims = [args.hidden_dim]
         return {
@@ -350,7 +369,9 @@ def build_model_config(args: argparse.Namespace) -> Dict[str, Any]:
                 "bidirectional": bool(args.bidirectional),
                 "hidden_dim": sequence_hidden_dim,
                 "num_filters": args.num_filters,
-                "kernel_sizes": [int(part.strip()) for part in str(args.kernel_sizes).split(",") if part.strip()],
+                "kernel_sizes": [
+                    int(part.strip()) for part in str(args.kernel_sizes).split(",") if part.strip()
+                ],
                 "d_model": args.d_model,
                 "nhead": args.nhead,
                 "dim_feedforward": args.dim_feedforward,
@@ -392,7 +413,13 @@ def dates_to_indices(
 
 def nested_dates_to_indices(
     X: pd.DataFrame,
-    nested_splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]]],
+    nested_splits: List[
+        Tuple[
+            List[pd.Timestamp],
+            List[pd.Timestamp],
+            List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]],
+        ]
+    ],
     date_col: str = "date",
 ) -> List[Dict[str, Any]]:
     indexed: List[Dict[str, Any]] = []
@@ -423,7 +450,9 @@ def build_split_plan(
 ) -> Dict[str, Any]:
     use_holdout = args.use_holdout == 1
     if use_holdout:
-        effective_holdout_gap = max(int(getattr(args, "holdout_gap_days", 0)), int(getattr(args, "embargo_days", 0)))
+        effective_holdout_gap = max(
+            int(getattr(args, "holdout_gap_days", 0)), int(getattr(args, "embargo_days", 0))
+        )
         search_df, holdout_df = final_holdout_split_by_date(
             X,
             date_col=date_col,
@@ -476,8 +505,12 @@ def build_split_plan(
         "n_outer_folds": args.n_outer_folds if args.split_mode == "nested_wf" else None,
         "n_inner_folds": args.n_inner_folds if args.split_mode == "nested_wf" else None,
         "inner_embargo_days": (
-            args.embargo_days if getattr(args, "inner_embargo_days", None) is None else args.inner_embargo_days
-        ) if args.split_mode == "nested_wf" else None,
+            args.embargo_days
+            if getattr(args, "inner_embargo_days", None) is None
+            else args.inner_embargo_days
+        )
+        if args.split_mode == "nested_wf"
+        else None,
         "train_start_ratio": args.train_start_ratio,
         "split_min_rows": args.split_min_rows,
     }
@@ -520,8 +553,12 @@ def resolve_window_config(
 
     research_start = _parse_optional_date(_coalesce_window_arg(args.research_start_date))
     research_end = _parse_optional_date(_coalesce_window_arg(args.research_end_date))
-    report_start = _parse_optional_date(_coalesce_window_arg(args.report_start_date, args.backtest_start_date))
-    report_end = _parse_optional_date(_coalesce_window_arg(args.report_end_date, args.backtest_end_date))
+    report_start = _parse_optional_date(
+        _coalesce_window_arg(args.report_start_date, args.backtest_start_date)
+    )
+    report_end = _parse_optional_date(
+        _coalesce_window_arg(args.report_end_date, args.backtest_end_date)
+    )
 
     effective_research_start = research_start or default_start
     effective_research_end = research_end or default_end
@@ -536,11 +573,16 @@ def resolve_window_config(
         raise ValueError(
             f"report_start_date {effective_report_start} cannot be later than report_end_date {effective_report_end}"
         )
-    if effective_report_start < effective_research_start or effective_report_end > effective_research_end:
+    if (
+        effective_report_start < effective_research_start
+        or effective_report_end > effective_research_end
+    ):
         raise ValueError("Report window must stay within the research window.")
 
     logger.info("Universe-aligned default research window: (%s, %s)", default_start, default_end)
-    logger.info("Effective research window: (%s, %s)", effective_research_start, effective_research_end)
+    logger.info(
+        "Effective research window: (%s, %s)", effective_research_start, effective_research_end
+    )
     logger.info("Effective report window: (%s, %s)", effective_report_start, effective_report_end)
     return {
         "default_start": default_start,
@@ -637,7 +679,9 @@ def load_previous_experiment(
     return prev_exp_dir, prev_best_config, prev_manifest, prev_model_path, completed_search_runs
 
 
-def _build_search_base_config(args: argparse.Namespace, prev_best_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _build_search_base_config(
+    args: argparse.Namespace, prev_best_config: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
     if prev_best_config is not None:
         return prev_best_config
     try:
@@ -656,7 +700,9 @@ def main() -> None:
     logger.info("Basket path: %s", basket_path)
     logger.info("Output dir: %s", args.output_dir)
 
-    panel_df, basket_report, basket_meta = load_and_validate_data(basket_path, args.file_pattern, args.ticker_from)
+    panel_df, basket_report, basket_meta = load_and_validate_data(
+        basket_path, args.file_pattern, args.ticker_from
+    )
     window_config = resolve_window_config(
         panel_df,
         args,
@@ -688,7 +734,9 @@ def _run_rolling_retrain(
     experiment_dir = create_experiment_dir(args.output_dir, _next_experiment_id(args.output_dir))
     rolling_config = RollingConfig(
         window_type=args.rolling_mode,
-        rolling_window_length=args.rolling_window_length if args.rolling_mode == "rolling" else None,
+        rolling_window_length=args.rolling_window_length
+        if args.rolling_mode == "rolling"
+        else None,
         retrain_frequency=args.retrain_frequency,
         min_history_days=args.min_history_days,
     )
@@ -730,7 +778,9 @@ def _run_single_experiment(
     window_config: Dict[str, pd.Timestamp],
 ) -> None:
     os.makedirs(args.output_dir, exist_ok=True)
-    prev_exp_dir, prev_best_config, prev_manifest, prev_model_path, completed_search_runs = load_previous_experiment(args)
+    prev_exp_dir, prev_best_config, prev_manifest, prev_model_path, completed_search_runs = (
+        load_previous_experiment(args)
+    )
     continue_mode = prev_exp_dir is not None
     if continue_mode:
         logger.info("Continue mode - source experiment: %s", prev_exp_dir)
@@ -742,7 +792,9 @@ def _run_single_experiment(
             raise ValueError("continue mode requires a previous experiment directory")
         experiment_dir = create_continue_run_dir(prev_exp_dir)
     else:
-        experiment_dir = create_experiment_dir(args.output_dir, _next_experiment_id(args.output_dir))
+        experiment_dir = create_experiment_dir(
+            args.output_dir, _next_experiment_id(args.output_dir)
+        )
     logger.info("Experiment dir: %s", experiment_dir)
 
     research_start = window_config["research_start"]
@@ -768,7 +820,9 @@ def _run_single_experiment(
     logger.info("Samples: %s", len(X))
     logger.info("Tickers: %s", feature_meta.n_tickers)
     if X.empty:
-        raise ValueError(f"No samples remain inside research window [{research_start}, {research_end}]")
+        raise ValueError(
+            f"No samples remain inside research window [{research_start}, {research_end}]"
+        )
 
     split_plan = build_split_plan(X, y, args, date_col="date", ticker_col="ticker")
     search_X = split_plan["search_X"]
@@ -831,10 +885,10 @@ def _run_single_experiment(
         train_metrics = cast(
             Dict[str, Any],
             evaluate_scores_df(
-            final_eval_scores_df,
-            date_col="date",
-            ticker_col="ticker",
-            config=best_config,
+                final_eval_scores_df,
+                date_col="date",
+                ticker_col="ticker",
+                config=best_config,
             ),
         )
         train_metrics["evaluation_split"] = "holdout"
@@ -889,7 +943,9 @@ def _run_single_experiment(
                 ticker_col="ticker",
                 seed=best_seed,
             )
-            train_notes.append("Search did not return a reusable final model; retrained best configuration on search data.")
+            train_notes.append(
+                "Search did not return a reusable final model; retrained best configuration on search data."
+            )
         else:
             train_notes.append("Reused best candidate final model trained during search.")
 
@@ -899,7 +955,9 @@ def _run_single_experiment(
 
         holdout_scores_df = pd.DataFrame()
         if split_summary["use_holdout"] and holdout_X is not None and holdout_y is not None:
-            holdout_pred = predict_panel(final_model, holdout_X, date_col="date", ticker_col="ticker")
+            holdout_pred = predict_panel(
+                final_model, holdout_X, date_col="date", ticker_col="ticker"
+            )
             holdout_scores_df = align_scores_with_labels(
                 holdout_pred,
                 holdout_X,
@@ -910,7 +968,9 @@ def _run_single_experiment(
             )
             holdout_scores_df["split"] = "holdout"
             final_eval_scores_df = holdout_scores_df
-            final_metrics = evaluate_scores_df(final_eval_scores_df, date_col="date", ticker_col="ticker", config=best_config)
+            final_metrics = evaluate_scores_df(
+                final_eval_scores_df, date_col="date", ticker_col="ticker", config=best_config
+            )
             train_metrics = dict(final_metrics)
             train_metrics["evaluation_split"] = "holdout"
             train_metrics["search_rank_ic_mean"] = search_metrics.get("rank_ic_mean")
@@ -950,7 +1010,9 @@ def _run_single_experiment(
             "raw_signals": int(prep_stats.get("raw_signals", 0)),
             "prepared_signals": int(prep_stats.get("prepared_signals", 0)),
             "dropped_signals": int(prep_stats.get("dropped_signals", 0)),
-            "execution_lag_days": int(prep_stats.get("execution_lag_days", args.execution_lag_days)),
+            "execution_lag_days": int(
+                prep_stats.get("execution_lag_days", args.execution_lag_days)
+            ),
         }
     )
     if prep_stats.get("dropped_signals", 0):
@@ -960,7 +1022,8 @@ def _run_single_experiment(
             f"at execution lag {prep_stats['execution_lag_days']}."
         )
     report_scores_df = final_eval_scores_df[
-        (final_eval_scores_df["trade_date"] >= report_start) & (final_eval_scores_df["trade_date"] <= report_end)
+        (final_eval_scores_df["trade_date"] >= report_start)
+        & (final_eval_scores_df["trade_date"] <= report_end)
     ].copy()
     portfolio_config = PortfolioConfig(
         top_k=args.top_k,
@@ -983,7 +1046,9 @@ def _run_single_experiment(
         end_date=report_end,
         rebalance_anchor=args.rebalance_anchor,
     )
-    logger.info("Backtest final equity: %s", f"{backtest_result.equity_curve['equity'].iloc[-1]:,.2f}")
+    logger.info(
+        "Backtest final equity: %s", f"{backtest_result.equity_curve['equity'].iloc[-1]:,.2f}"
+    )
     logger.info("Total trades: %s", len(backtest_result.trades))
     execution_stats = dict(backtest_result.execution_stats)
     train_metrics.update(
@@ -993,10 +1058,16 @@ def _run_single_experiment(
             "orders_rejected": int(execution_stats.get("orders_rejected", 0)),
             "total_commission": float(execution_stats.get("total_commission", 0.0)),
             "total_slippage": float(execution_stats.get("total_slippage", 0.0)),
-            "avg_tradable_score_coverage": float(execution_stats.get("avg_tradable_score_coverage", 0.0)),
+            "avg_tradable_score_coverage": float(
+                execution_stats.get("avg_tradable_score_coverage", 0.0)
+            ),
             "rebalance_days_total": int(execution_stats.get("rebalance_days_total", 0)),
-            "rebalance_days_without_scores": int(execution_stats.get("rebalance_days_without_scores", 0)),
-            "rebalance_days_without_tradable_scores": int(execution_stats.get("rebalance_days_without_tradable_scores", 0)),
+            "rebalance_days_without_scores": int(
+                execution_stats.get("rebalance_days_without_scores", 0)
+            ),
+            "rebalance_days_without_tradable_scores": int(
+                execution_stats.get("rebalance_days_without_tradable_scores", 0)
+            ),
         }
     )
     reject_reasons = execution_stats.get("reject_reasons", {}) or {}
@@ -1004,7 +1075,8 @@ def _run_single_experiment(
         train_metrics[f"reject_{reason}"] = int(count)
     if reject_reasons:
         train_notes.append(
-            "Execution rejects: " + ", ".join(f"{reason}={count}" for reason, count in sorted(reject_reasons.items()))
+            "Execution rejects: "
+            + ", ".join(f"{reason}={count}" for reason, count in sorted(reject_reasons.items()))
         )
 
     benchmark_curve = None
@@ -1014,10 +1086,12 @@ def _run_single_experiment(
             initial_cash=args.initial_cash,
         )
         if not benchmark_curve.empty and not backtest_result.equity_curve.empty:
-            train_metrics["benchmark_total_return"] = float(benchmark_curve["bnh_cum_return"].iloc[-1])
-            train_metrics["excess_return_vs_benchmark"] = float(backtest_result.equity_curve["cum_return"].iloc[-1]) - float(
+            train_metrics["benchmark_total_return"] = float(
                 benchmark_curve["bnh_cum_return"].iloc[-1]
             )
+            train_metrics["excess_return_vs_benchmark"] = float(
+                backtest_result.equity_curve["cum_return"].iloc[-1]
+            ) - float(benchmark_curve["bnh_cum_return"].iloc[-1])
 
     if not final_eval_scores_df.empty and "label" in final_eval_scores_df.columns:
         ranking_metrics = compute_all_ranking_metrics(
@@ -1033,10 +1107,14 @@ def _run_single_experiment(
     os.makedirs(artifacts_dir, exist_ok=True)
     report_scores_df.to_csv(os.path.join(artifacts_dir, "scores.csv"), index=False)
     final_eval_scores_df.to_csv(os.path.join(artifacts_dir, "scores_research.csv"), index=False)
-    backtest_result.equity_curve.to_csv(os.path.join(artifacts_dir, "equity_curve.csv"), index=False)
+    backtest_result.equity_curve.to_csv(
+        os.path.join(artifacts_dir, "equity_curve.csv"), index=False
+    )
     backtest_result.trades.to_csv(os.path.join(artifacts_dir, "trades.csv"), index=False)
     if benchmark_curve is not None and not benchmark_curve.empty:
-        benchmark_curve.to_csv(os.path.join(artifacts_dir, "benchmark_equity_curve.csv"), index=False)
+        benchmark_curve.to_csv(
+            os.path.join(artifacts_dir, "benchmark_equity_curve.csv"), index=False
+        )
 
     report_config = {
         "basket": args.basket,

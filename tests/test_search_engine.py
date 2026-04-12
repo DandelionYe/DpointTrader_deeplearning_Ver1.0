@@ -193,8 +193,12 @@ class TestSearchEngine:
                 "verbosity": 0,
             },
         }
-        args1 = argparse.Namespace(runs=2, seed=12345, selection_metric="rank_ic_mean", model_type="xgb")
-        args2 = argparse.Namespace(runs=2, seed=12345, selection_metric="rank_ic_mean", model_type="xgb")
+        args1 = argparse.Namespace(
+            runs=2, seed=12345, selection_metric="rank_ic_mean", model_type="xgb"
+        )
+        args2 = argparse.Namespace(
+            runs=2, seed=12345, selection_metric="rank_ic_mean", model_type="xgb"
+        )
 
         result1 = run_search(
             X,
@@ -218,7 +222,9 @@ class TestSearchEngine:
         )
 
         assert result1.best_seed == result2.best_seed
-        assert abs(result1.best_metrics["rank_ic_mean"] - result2.best_metrics["rank_ic_mean"]) < 1e-6
+        assert (
+            abs(result1.best_metrics["rank_ic_mean"] - result2.best_metrics["rank_ic_mean"]) < 1e-6
+        )
 
     def test_sequence_candidate_config_sampling(self):
         rng = np.random.RandomState(42)

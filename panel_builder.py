@@ -14,6 +14,7 @@ Panel 数据构建器模块
     >>> from panel_builder import build_panel
     >>> panel_df = build_panel(stock_frames, basket_name="basket_1")
 """
+
 from __future__ import annotations
 
 import logging
@@ -68,9 +69,7 @@ def align_calendar(
         # 获取所有股票的日期交集
         all_dates = set(panel_df[date_col].unique())
         for ticker in panel_df[ticker_col].unique():
-            ticker_dates = set(
-                panel_df[panel_df[ticker_col] == ticker][date_col].unique()
-            )
+            ticker_dates = set(panel_df[panel_df[ticker_col] == ticker][date_col].unique())
             all_dates &= ticker_dates
             if not all_dates:
                 logger.warning(
@@ -138,8 +137,7 @@ def build_panel(
                     df_copy[ticker_col] = f"stock_{i}"
             else:
                 raise ValueError(
-                    f"DataFrame {i} missing '{ticker_col}' column "
-                    "and add_missing_tickers=False"
+                    f"DataFrame {i} missing '{ticker_col}' column and add_missing_tickers=False"
                 )
 
         # 确保有 date 列

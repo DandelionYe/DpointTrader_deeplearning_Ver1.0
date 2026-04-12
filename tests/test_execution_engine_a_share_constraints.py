@@ -50,7 +50,9 @@ def test_st_limit_up_rejects_buy():
     engine = ExecutionEngine(constraints=TradingConstraints(min_trade_value=0.0))
     prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
 
-    fill = engine.execute_order(Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close)
+    fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close
+    )
 
     assert fill.status == "rejected"
     assert fill.reject_reason == "limit_up"
@@ -61,7 +63,9 @@ def test_chinext_allows_move_below_twenty_percent_limit():
     engine = ExecutionEngine(constraints=TradingConstraints(min_trade_value=0.0))
     prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
 
-    fill = engine.execute_order(Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close)
+    fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close
+    )
 
     assert fill.status == "filled"
     assert fill.filled_shares == 100
@@ -72,7 +76,9 @@ def test_suspended_security_rejects_order():
     engine = ExecutionEngine(constraints=TradingConstraints(min_trade_value=0.0))
     prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
 
-    fill = engine.execute_order(Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close)
+    fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close
+    )
 
     assert fill.status == "rejected"
     assert fill.reject_reason == "suspended"
@@ -83,8 +89,12 @@ def test_t_plus_one_rejects_same_day_sell_after_buy():
     engine = ExecutionEngine(constraints=TradingConstraints(min_trade_value=0.0))
     prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
 
-    buy_fill = engine.execute_order(Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close)
-    sell_fill = engine.execute_order(Order(ticker="A", action="sell", shares=100, date=trade_date), price_df, prev_close)
+    buy_fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close
+    )
+    sell_fill = engine.execute_order(
+        Order(ticker="A", action="sell", shares=100, date=trade_date), price_df, prev_close
+    )
 
     assert buy_fill.status == "filled"
     assert sell_fill.status == "rejected"
@@ -93,11 +103,15 @@ def test_t_plus_one_rejects_same_day_sell_after_buy():
 
 def test_volume_cap_allows_partial_fill_when_enabled():
     price_df, prev_date, trade_date = _price_panel(prev_close=10.0, open_price=10.0, volume=3_500)
-    constraints = TradingConstraints(max_participation_rate=0.10, allow_partial_fill=True, min_trade_value=0.0)
+    constraints = TradingConstraints(
+        max_participation_rate=0.10, allow_partial_fill=True, min_trade_value=0.0
+    )
     engine = ExecutionEngine(constraints=constraints)
     prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
 
-    fill = engine.execute_order(Order(ticker="A", action="buy", shares=1_000, date=trade_date), price_df, prev_close)
+    fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=1_000, date=trade_date), price_df, prev_close
+    )
 
     assert fill.status == "filled"
     assert fill.filled_shares == 300
@@ -108,7 +122,9 @@ def test_board_lot_round_to_zero_rejects_small_order():
     engine = ExecutionEngine(constraints=TradingConstraints(min_trade_value=0.0))
     prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
 
-    fill = engine.execute_order(Order(ticker="A", action="buy", shares=50, date=trade_date), price_df, prev_close)
+    fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=50, date=trade_date), price_df, prev_close
+    )
 
     assert fill.status == "rejected"
     assert fill.reject_reason == "board_lot_round_to_zero"
@@ -127,16 +143,34 @@ def test_sell_stamp_duty_is_accounted_for_separately():
 
     constraints = TradingConstraints(min_trade_value=0.0)
     engine = ExecutionEngine(constraints=constraints)
-    first_prev_close = float(full_price_df.loc[full_price_df["date"] == prev_date, "close_qfq"].iloc[0])
-    buy_fill = engine.execute_order(Order(ticker="A", action="buy", shares=100, date=trade_date), full_price_df, first_prev_close)
+    first_prev_close = float(
+        full_price_df.loc[full_price_df["date"] == prev_date, "close_qfq"].iloc[0]
+    )
+    buy_fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=100, date=trade_date),
+        full_price_df,
+        first_prev_close,
+    )
     engine.reset_daily()
-    second_prev_close = float(full_price_df.loc[full_price_df["date"] == trade_date, "close_qfq"].iloc[0])
-    sell_fill = engine.execute_order(Order(ticker="A", action="sell", shares=100, date=next_date), full_price_df, second_prev_close)
+    second_prev_close = float(
+        full_price_df.loc[full_price_df["date"] == trade_date, "close_qfq"].iloc[0]
+    )
+    sell_fill = engine.execute_order(
+        Order(ticker="A", action="sell", shares=100, date=next_date),
+        full_price_df,
+        second_prev_close,
+    )
 
     assert buy_fill.status == "filled"
     assert sell_fill.status == "filled"
     assert sell_fill.stamp_duty > 0
-    assert abs(sell_fill.stamp_duty - sell_fill.filled_shares * sell_fill.fill_price * engine.stamp_duty_sell) < 1e-9
+    assert (
+        abs(
+            sell_fill.stamp_duty
+            - sell_fill.filled_shares * sell_fill.fill_price * engine.stamp_duty_sell
+        )
+        < 1e-9
+    )
     assert engine.get_stats()["total_stamp_duty"] == sell_fill.stamp_duty
 
 
@@ -145,7 +179,9 @@ def test_missing_volume_rejects_order():
     engine = ExecutionEngine(constraints=TradingConstraints(min_trade_value=0.0))
     prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
 
-    fill = engine.execute_order(Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close)
+    fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=100, date=trade_date), price_df, prev_close
+    )
 
     assert fill.status == "rejected"
     assert fill.reject_reason == "volume_cap"
@@ -161,7 +197,9 @@ def test_prepare_scores_for_backtest_adds_tradeability_diagnostics():
         }
     )
 
-    prepared = prepare_scores_for_backtest(panel_df, scores_df, execution_lag_days=1, drop_untradable_signals=False)
+    prepared = prepare_scores_for_backtest(
+        panel_df, scores_df, execution_lag_days=1, drop_untradable_signals=False
+    )
 
     assert "is_tradeable" in prepared.columns
     assert "expected_drop_reason" in prepared.columns

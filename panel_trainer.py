@@ -108,13 +108,17 @@ def _predict_and_align_fold(
     date_col: str,
     ticker_col: str,
 ) -> Tuple[pd.DataFrame, Dict[str, float]]:
-    eval_store = _build_sequence_store(
-        X_eval,
-        y_eval if _is_sequence_model(config) else None,
-        config=config,
-        date_col=date_col,
-        ticker_col=ticker_col,
-    ) if _is_sequence_model(config) else None
+    eval_store = (
+        _build_sequence_store(
+            X_eval,
+            y_eval if _is_sequence_model(config) else None,
+            config=config,
+            date_col=date_col,
+            ticker_col=ticker_col,
+        )
+        if _is_sequence_model(config)
+        else None
+    )
     pred_df = predict_panel(
         model,
         X_eval,
@@ -256,7 +260,9 @@ def train_panel_model(
 ) -> Tuple[Any, Dict[str, Any]]:
     feature_cols = _feature_cols(X, date_col, ticker_col)
     model_type = str(config.get("model_type", "xgb")).lower()
-    task_type = str(config.get("task_type", infer_task_type(config.get("label_mode", "binary_next_close_up"))))
+    task_type = str(
+        config.get("task_type", infer_task_type(config.get("label_mode", "binary_next_close_up")))
+    )
     model_params = dict(config.get("model_params", {}))
     is_sequence = model_type in SEQUENCE_MODEL_TYPES
     early_stop_ratio = float(model_params.get("early_stop_ratio", 0.1))
@@ -302,8 +308,24 @@ def train_panel_model(
             int(model_params.get("batch_size", 64)),
             model_params.get("hidden_dim", model_params.get("d_model", "n/a")),
             bool(model_params.get("auto_batch_tune", True)),
-            float(cast(Any, model_params.get("train_target_vram_util", model_params.get("target_vram_util", 0.88)))) * 100.0,
-            float(cast(Any, model_params.get("predict_target_vram_util", model_params.get("target_vram_util", 0.88)))) * 100.0,
+            float(
+                cast(
+                    Any,
+                    model_params.get(
+                        "train_target_vram_util", model_params.get("target_vram_util", 0.88)
+                    ),
+                )
+            )
+            * 100.0,
+            float(
+                cast(
+                    Any,
+                    model_params.get(
+                        "predict_target_vram_util", model_params.get("target_vram_util", 0.88)
+                    ),
+                )
+            )
+            * 100.0,
             bool(model_params.get("use_amp", False)),
             bool(model_params.get("use_tf32", False)),
             0 if X_early_val is None else len(X_early_val),
@@ -321,7 +343,9 @@ def train_panel_model(
             "n_classes": config.get("n_classes"),
             **model_params,
         }
-        model: Any = train_pytorch_model(store, None, torch_config, device=device, X_val=early_val_store, y_val=None)
+        model: Any = train_pytorch_model(
+            store, None, torch_config, device=device, X_val=early_val_store, y_val=None
+        )
         model._seq_len = store.seq_len
         model._feature_names = list(store.feature_names)
         model._is_panel_sequence_model = True
@@ -337,7 +361,9 @@ def train_panel_model(
             "device": str(config.get("device", "auto")),
             "is_sequence": True,
             "seq_len": store.seq_len,
-            "batch_size": int(getattr(model, "_trained_batch_size", int(model_params.get("batch_size", 64)))),
+            "batch_size": int(
+                getattr(model, "_trained_batch_size", int(model_params.get("batch_size", 64)))
+            ),
         }
         return model, model_info
 
@@ -372,7 +398,9 @@ def train_panel_model(
             "n_classes": config.get("n_classes"),
             **model_params,
         }
-        torch_model: Any = train_pytorch_model(X_train_df, y_fit, torch_config, device=device, X_val=X_val_df, y_val=y_early_val)
+        torch_model: Any = train_pytorch_model(
+            X_train_df, y_fit, torch_config, device=device, X_val=X_val_df, y_val=y_early_val
+        )
         torch_model._device_preference = str(config.get("device", "auto"))
         torch_model._feature_names = list(feature_cols)
         torch_model._preprocessor = preprocessor
@@ -380,7 +408,13 @@ def train_panel_model(
         torch_model._n_classes = config.get("n_classes")
         model = torch_model
     else:
-        candidate = {"model_config": {"model_type": model_type, "task_type": task_type, "params": model_params}}
+        candidate = {
+            "model_config": {
+                "model_type": model_type,
+                "task_type": task_type,
+                "params": model_params,
+            }
+        }
         model = make_model(candidate, seed=seed)
         if not hasattr(model, "fit"):
             raise ValueError(f"Model {model_type} does not have fit method")
@@ -432,7 +466,9 @@ def predict_panel(
             int(getattr(model, "_trained_batch_size", 64)),
             int(getattr(model, "_predict_batch_size", getattr(model, "_trained_batch_size", 64))),
         )
-        output_components = predict_pytorch_model_sequence_outputs(model, store, store.meta_df, device)
+        output_components = predict_pytorch_model_sequence_outputs(
+            model, store, store.meta_df, device
+        )
         out = pd.DataFrame(
             {
                 date_col: store.meta_df["date"].to_numpy(),
@@ -586,7 +622,16 @@ def evaluate_scores_df(
             "ic_mean": 0.0,
             "topk_return_mean": 0.0,
         }
-    task_type = str(config.get("task_type")) if config else infer_task_type("regression_return" if scores_df[label_col].dtype.kind == "f" and ((scores_df[label_col] < 0).any() or (scores_df[label_col] > 1).any()) else "binary_next_close_up")
+    task_type = (
+        str(config.get("task_type"))
+        if config
+        else infer_task_type(
+            "regression_return"
+            if scores_df[label_col].dtype.kind == "f"
+            and ((scores_df[label_col] < 0).any() or (scores_df[label_col] > 1).any())
+            else "binary_next_close_up"
+        )
+    )
     metrics = compute_all_ranking_metrics(
         scores_df,
         score_col=score_col,
@@ -665,7 +710,11 @@ def train_with_walkforward(
         if _is_sequence_model(config):
             clear_torch_cuda_cache()
 
-    oof_df = pd.concat(all_val_scores, ignore_index=True) if compute_oof and all_val_scores else pd.DataFrame()
+    oof_df = (
+        pd.concat(all_val_scores, ignore_index=True)
+        if compute_oof and all_val_scores
+        else pd.DataFrame()
+    )
     final_model, final_info = train_panel_model(
         X,
         y,
@@ -674,7 +723,9 @@ def train_with_walkforward(
         ticker_col=ticker_col,
         seed=seed,
     )
-    oof_metrics = evaluate_scores_df(oof_df, date_col=date_col, ticker_col=ticker_col, config=config)
+    oof_metrics = evaluate_scores_df(
+        oof_df, date_col=date_col, ticker_col=ticker_col, config=config
+    )
 
     return PanelTrainResult(
         model=final_model,
@@ -766,7 +817,9 @@ def train_with_nested_walkforward(
         ticker_col=ticker_col,
         seed=seed,
     )
-    oof_metrics = evaluate_scores_df(oof_df, date_col=date_col, ticker_col=ticker_col, config=config)
+    oof_metrics = evaluate_scores_df(
+        oof_df, date_col=date_col, ticker_col=ticker_col, config=config
+    )
 
     return PanelTrainResult(
         model=final_model,

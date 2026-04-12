@@ -14,6 +14,7 @@ Basket 数据加载器模块
     >>> from basket_loader import load_basket_folder
     >>> panel_df, reports, basket_meta = load_basket_folder("./data/basket_1")
 """
+
 from __future__ import annotations
 
 import glob
@@ -49,6 +50,7 @@ class BasketMeta:
         date_range: 日期范围
         notes: 注释
     """
+
     basket_name: str
     basket_path: str
     n_tickers: int
@@ -73,6 +75,7 @@ class BasketReport:
         load_errors: 加载错误列表
         notes: 注释
     """
+
     basket_name: str
     total_rows: int
     n_tickers: int
@@ -136,6 +139,7 @@ def load_basket_manifest(manifest_path: str) -> Dict:
         manifest 字典
     """
     import json
+
     with open(manifest_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -190,9 +194,7 @@ def load_basket_folder(
     # 发现文件
     files = discover_basket_files(basket_path, file_pattern)
     if not files:
-        raise ValueError(
-            f"No files found matching pattern '{file_pattern}' in {basket_path}"
-        )
+        raise ValueError(f"No files found matching pattern '{file_pattern}' in {basket_path}")
 
     # 提取 basket 名称
     basket_name = os.path.basename(basket_path.rstrip("/\\"))
@@ -236,10 +238,12 @@ def load_basket_folder(
             tickers.append(ticker)
 
         except Exception as e:
-            load_errors.append({
-                "file": file_path,
-                "error": str(e),
-            })
+            load_errors.append(
+                {
+                    "file": file_path,
+                    "error": str(e),
+                }
+            )
             notes.append(f"Error loading {file_path}: {e}")
 
     if not stock_frames:

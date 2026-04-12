@@ -18,7 +18,9 @@ class SplitSpec:
     embargo_days: int = 0
     fold_id: int = 0
 
-    def to_date_sets(self, unique_dates: List[pd.Timestamp]) -> Tuple[List[pd.Timestamp], List[pd.Timestamp]]:
+    def to_date_sets(
+        self, unique_dates: List[pd.Timestamp]
+    ) -> Tuple[List[pd.Timestamp], List[pd.Timestamp]]:
         train_dates = [d for d in unique_dates if self.train_start <= d <= self.train_end]
         val_dates = [d for d in unique_dates if self.val_start <= d <= self.val_end]
         return train_dates, val_dates
@@ -41,7 +43,9 @@ def _rows_for_dates(panel_df: pd.DataFrame, dates: List[pd.Timestamp], *, date_c
     return int(panel_df[panel_df[date_col].isin(dates)].shape[0])
 
 
-def _tickers_for_dates(panel_df: pd.DataFrame, dates: List[pd.Timestamp], *, date_col: str, ticker_col: str) -> int:
+def _tickers_for_dates(
+    panel_df: pd.DataFrame, dates: List[pd.Timestamp], *, date_col: str, ticker_col: str
+) -> int:
     if not dates:
         return 0
     return int(panel_df.loc[panel_df[date_col].isin(dates), ticker_col].nunique())
@@ -57,7 +61,11 @@ def _log_split_summary(
     embargo_days: int = 0,
 ) -> None:
     if not splits:
-        logger.warning("%s: no valid folds generated from %d dates", name, len(_unique_dates(panel_df, date_col)))
+        logger.warning(
+            "%s: no valid folds generated from %d dates",
+            name,
+            len(_unique_dates(panel_df, date_col)),
+        )
         return
     logger.info(
         "%s: %d folds generated from %d dates (embargo=%d)",
@@ -94,10 +102,7 @@ def walkforward_splits_by_date(
         logger.warning("walkforward_splits_by_date: not enough unique dates")
         return []
 
-    cuts = [
-        train_start_ratio + (1.0 - train_start_ratio) * i / n_folds
-        for i in range(n_folds + 1)
-    ]
+    cuts = [train_start_ratio + (1.0 - train_start_ratio) * i / n_folds for i in range(n_folds + 1)]
 
     splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]] = []
     for fold_idx in range(len(cuts) - 1):
@@ -143,13 +148,12 @@ def walkforward_splits_with_embargo(
     unique_dates = _unique_dates(panel_df, date_col)
     n_dates = len(unique_dates)
     if n_dates < embargo_days + 2:
-        logger.warning("walkforward_splits_with_embargo: not enough dates for embargo=%d", embargo_days)
+        logger.warning(
+            "walkforward_splits_with_embargo: not enough dates for embargo=%d", embargo_days
+        )
         return []
 
-    cuts = [
-        train_start_ratio + (1.0 - train_start_ratio) * i / n_folds
-        for i in range(n_folds + 1)
-    ]
+    cuts = [train_start_ratio + (1.0 - train_start_ratio) * i / n_folds for i in range(n_folds + 1)]
 
     splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]] = []
     for fold_idx in range(len(cuts) - 1):
@@ -203,7 +207,11 @@ def nested_walkforward_splits_by_date(
     embargo_days: int = 5,
     inner_use_embargo: bool = True,
     inner_embargo_days: Optional[int] = None,
-) -> List[Tuple[List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]]]:
+) -> List[
+    Tuple[
+        List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]
+    ]
+]:
     unique_dates = _unique_dates(panel_df, date_col)
     n_dates = len(unique_dates)
     cuts = [
@@ -211,8 +219,16 @@ def nested_walkforward_splits_by_date(
         for i in range(n_outer_folds + 1)
     ]
 
-    splits: List[Tuple[List[pd.Timestamp], List[pd.Timestamp], List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]]]] = []
-    effective_inner_embargo = embargo_days if inner_embargo_days is None else int(inner_embargo_days)
+    splits: List[
+        Tuple[
+            List[pd.Timestamp],
+            List[pd.Timestamp],
+            List[Tuple[List[pd.Timestamp], List[pd.Timestamp]]],
+        ]
+    ] = []
+    effective_inner_embargo = (
+        embargo_days if inner_embargo_days is None else int(inner_embargo_days)
+    )
     for fold_idx in range(len(cuts) - 1):
         outer_train_end_idx = int(n_dates * cuts[fold_idx])
         outer_val_end_idx = int(n_dates * cuts[fold_idx + 1])
@@ -260,7 +276,9 @@ def nested_walkforward_splits_by_date(
                 min_rows=min_rows,
             )
         if not inner_splits:
-            logger.warning("nested_walkforward: fold %d skipped (no valid inner splits)", fold_idx + 1)
+            logger.warning(
+                "nested_walkforward: fold %d skipped (no valid inner splits)", fold_idx + 1
+            )
             continue
         splits.append((outer_train_dates, outer_val_dates, inner_splits))
 
@@ -281,7 +299,9 @@ def nested_walkforward_splits_by_date(
             idx,
             len(outer_train_dates),
             _rows_for_dates(panel_df, outer_train_dates, date_col=date_col),
-            _tickers_for_dates(panel_df, outer_train_dates, date_col=date_col, ticker_col=ticker_col),
+            _tickers_for_dates(
+                panel_df, outer_train_dates, date_col=date_col, ticker_col=ticker_col
+            ),
             len(outer_val_dates),
             _rows_for_dates(panel_df, outer_val_dates, date_col=date_col),
             _tickers_for_dates(panel_df, outer_val_dates, date_col=date_col, ticker_col=ticker_col),
@@ -416,7 +436,9 @@ def build_date_splits(
             inner_use_embargo=True,
             inner_embargo_days=inner_embargo_days,
         )
-    raise ValueError(f"Invalid split_mode: {split_mode}. Must be one of ['wf', 'wf_embargo', 'nested_wf']")
+    raise ValueError(
+        f"Invalid split_mode: {split_mode}. Must be one of ['wf', 'wf_embargo', 'nested_wf']"
+    )
 
 
 __all__ = [

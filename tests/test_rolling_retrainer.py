@@ -88,13 +88,17 @@ def local_tmpdir():
 
 class TestRollingRetrainer:
     def test_monthly_generates_multiple_retrain_dates(self, sample_panel, local_tmpdir):
-        config = RollingConfig(window_type="expanding", retrain_frequency="monthly", min_history_days=120)
+        config = RollingConfig(
+            window_type="expanding", retrain_frequency="monthly", min_history_days=120
+        )
         retrainer = RollingRetrainer(config=config, experiment_dir=local_tmpdir)
         retrain_dates = retrainer.iter_retrain_dates(sample_panel)
         assert len(retrain_dates) > 1
 
     def test_expanding_window_grows_over_time(self, sample_panel, local_tmpdir):
-        config = RollingConfig(window_type="expanding", retrain_frequency="monthly", min_history_days=120)
+        config = RollingConfig(
+            window_type="expanding", retrain_frequency="monthly", min_history_days=120
+        )
         retrainer = RollingRetrainer(config=config, experiment_dir=local_tmpdir)
         retrain_dates = retrainer.iter_retrain_dates(sample_panel)
         if len(retrain_dates) >= 2:
@@ -117,7 +121,9 @@ class TestRollingRetrainer:
             assert abs(len(train_data_1) - len(train_data_2)) < 50
 
     def test_each_snapshot_writes_manifest(self, sample_panel, mock_args, local_tmpdir):
-        config = RollingConfig(window_type="expanding", retrain_frequency="monthly", min_history_days=120)
+        config = RollingConfig(
+            window_type="expanding", retrain_frequency="monthly", min_history_days=120
+        )
         retrainer = RollingRetrainer(config=config, experiment_dir=local_tmpdir)
         snapshots = retrainer.run(sample_panel, mock_args)
         if snapshots:
@@ -128,7 +134,9 @@ class TestRollingRetrainer:
             assert os.path.exists(os.path.join(snapshot_dir, "equity_curve.csv"))
 
     def test_train_end_date_before_eval_date(self, sample_panel, mock_args, local_tmpdir):
-        config = RollingConfig(window_type="expanding", retrain_frequency="monthly", min_history_days=120)
+        config = RollingConfig(
+            window_type="expanding", retrain_frequency="monthly", min_history_days=120
+        )
         retrainer = RollingRetrainer(config=config, experiment_dir=local_tmpdir)
         snapshots = retrainer.run(sample_panel, mock_args)
         for snapshot in snapshots:

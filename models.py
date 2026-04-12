@@ -117,7 +117,9 @@ def is_torch_model_instance(model: Any) -> bool:
 def get_torch_runtime_info() -> Dict[str, Any]:
     info: Dict[str, Any] = {
         "torch_available": TORCH_AVAILABLE,
-        "torch_version": getattr(torch, "__version__", "not_installed") if TORCH_AVAILABLE else "not_installed",
+        "torch_version": getattr(torch, "__version__", "not_installed")
+        if TORCH_AVAILABLE
+        else "not_installed",
         "cuda_available": False,
         "cuda_version": None,
         "device_count": 0,
@@ -214,13 +216,17 @@ def create_sequence_dataset(
         if task_type == "multiclass_classification":
             y_tensor = torch.tensor(np.asarray(y_values, dtype=np.int64), dtype=torch.long)
         else:
-            y_tensor = torch.tensor(np.asarray(y_values, dtype=np.float32), dtype=torch.float32).unsqueeze(1)
+            y_tensor = torch.tensor(
+                np.asarray(y_values, dtype=np.float32), dtype=torch.float32
+            ).unsqueeze(1)
 
     if seq_len > 1:
         X_seq, y_seq = _make_sequences(X_tensor, y_tensor, seq_len)
         dataset = TensorDataset(X_seq, y_seq) if y_seq is not None else TensorDataset(X_seq)
     else:
-        dataset = TensorDataset(X_tensor, y_tensor) if y_tensor is not None else TensorDataset(X_tensor)
+        dataset = (
+            TensorDataset(X_tensor, y_tensor) if y_tensor is not None else TensorDataset(X_tensor)
+        )
 
     kwargs: Dict[str, Any] = {
         "batch_size": batch_size,
@@ -272,8 +278,11 @@ def make_sequence_dataloader(
 
 
 if TORCH_AVAILABLE:
+
     class PanelSequenceDataset(Dataset):
-        def __init__(self, store: PanelSequenceStore, task_type: str = "binary_classification") -> None:
+        def __init__(
+            self, store: PanelSequenceStore, task_type: str = "binary_classification"
+        ) -> None:
             self.store = store
             self.task_type = str(task_type)
 
@@ -294,8 +303,11 @@ if TORCH_AVAILABLE:
                 y_tensor = torch.tensor([y_value], dtype=torch.float32)
             return X_tensor, y_tensor
 else:  # pragma: no cover
+
     class PanelSequenceDataset:  # type: ignore[no-redef]
-        def __init__(self, store: PanelSequenceStore, task_type: str = "binary_classification") -> None:
+        def __init__(
+            self, store: PanelSequenceStore, task_type: str = "binary_classification"
+        ) -> None:
             self.store = store
             self.task_type = str(task_type)
 
@@ -357,7 +369,9 @@ def _model_outputs_to_scores(logits: torch.Tensor, task_type: str) -> torch.Tens
     return logits
 
 
-def _model_outputs_to_prediction_components(logits: torch.Tensor, task_type: str) -> Dict[str, torch.Tensor]:
+def _model_outputs_to_prediction_components(
+    logits: torch.Tensor, task_type: str
+) -> Dict[str, torch.Tensor]:
     if task_type == "binary_classification":
         proba = torch.sigmoid(logits).reshape(-1).to(torch.float32)
         prediction = (proba >= 0.5).to(torch.float32)
@@ -545,7 +559,7 @@ def _resolve_safety_buffer_bytes(config: Dict[str, Any], mode: str) -> int:
     default_gib = 0.50 if mode == "predict" else 0.75
     if bool(config.get("use_amp", False)):
         default_gib += 0.25
-    return int(float(config.get(f"{mode}_vram_buffer_gib", default_gib)) * (1024 ** 3))
+    return int(float(config.get(f"{mode}_vram_buffer_gib", default_gib)) * (1024**3))
 
 
 def _batch_tune_cache_key(
@@ -661,12 +675,18 @@ def _probe_sequence_batch_memory(
                         if batch_idx >= warmup_batches:
                             break
                         X_batch = batch[0] if isinstance(batch, (tuple, list)) else batch
-                        X_batch = X_batch.to(device, non_blocking=bool(loader_settings.get("pin_memory", False)))
+                        X_batch = X_batch.to(
+                            device, non_blocking=bool(loader_settings.get("pin_memory", False))
+                        )
                         with autocast(device_type=device.type, enabled=use_amp):
                             logits = local_model(X_batch)
                             _ = _logits_to_probs(logits)
         else:
-            optimizer = optim.AdamW(local_model.parameters(), lr=float(config.get("learning_rate", 0.001)), weight_decay=float(config.get("weight_decay", 1e-5)))
+            optimizer = optim.AdamW(
+                local_model.parameters(),
+                lr=float(config.get("learning_rate", 0.001)),
+                weight_decay=float(config.get("weight_decay", 1e-5)),
+            )
             criterion = nn.BCEWithLogitsLoss()
             with _torch_precision_context(device, use_tf32):
                 for batch_idx, batch in enumerate(loader):
@@ -675,8 +695,12 @@ def _probe_sequence_batch_memory(
                     if not isinstance(batch, (tuple, list)) or len(batch) < 2:
                         raise ValueError("Training probe requires labels")
                     X_batch, y_batch = batch
-                    X_batch = X_batch.to(device, non_blocking=bool(loader_settings.get("pin_memory", False)))
-                    y_batch = y_batch.to(device, non_blocking=bool(loader_settings.get("pin_memory", False)))
+                    X_batch = X_batch.to(
+                        device, non_blocking=bool(loader_settings.get("pin_memory", False))
+                    )
+                    y_batch = y_batch.to(
+                        device, non_blocking=bool(loader_settings.get("pin_memory", False))
+                    )
                     optimizer.zero_grad(set_to_none=True)
                     with autocast(device_type=device.type, enabled=use_amp):
                         logits = local_model(X_batch)
@@ -685,7 +709,9 @@ def _probe_sequence_batch_memory(
                     optimizer.step()
         if device.type == "cuda":
             torch.cuda.synchronize(device)
-        peak_allocated = int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
+        peak_allocated = (
+            int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
+        )
         peak_reserved = int(torch.cuda.max_memory_reserved(device)) if device.type == "cuda" else 0
         util = float(peak_allocated / total_memory) if total_memory > 0 else 0.0
         return util, peak_allocated, peak_reserved
@@ -734,7 +760,11 @@ def _auto_tune_sequence_batch_size(
     target_util = _resolve_target_util(config, mode)
     total_memory = _cuda_total_memory(device)
     safety_buffer_bytes = _resolve_safety_buffer_bytes(config, mode)
-    safe_cap_util = float(max(0, total_memory - safety_buffer_bytes) / total_memory) if total_memory > 0 else 0.96
+    safe_cap_util = (
+        float(max(0, total_memory - safety_buffer_bytes) / total_memory)
+        if total_memory > 0
+        else 0.96
+    )
     max_util = min(0.96, target_util + 0.04, safe_cap_util)
     best_batch = min(requested, dataset_size)
     best_util = 0.0
@@ -766,17 +796,16 @@ def _auto_tune_sequence_batch_size(
                 "Auto batch probe (%s): batch_size=%d peak_allocated=%.2f GiB peak_reserved=%.2f GiB util=%.1f%% safe_cap=%.1f%%",
                 mode,
                 current,
-                peak_allocated / (1024 ** 3),
-                peak_reserved / (1024 ** 3),
+                peak_allocated / (1024**3),
+                peak_reserved / (1024**3),
                 util * 100.0,
                 max_util * 100.0,
             )
             if util <= max_util:
                 lower_batch = current
                 distance = abs(util - target_util)
-                if (
-                    distance < best_distance
-                    or (abs(distance - best_distance) <= 1e-9 and current < best_batch)
+                if distance < best_distance or (
+                    abs(distance - best_distance) <= 1e-9 and current < best_batch
                 ):
                     best_batch = current
                     best_util = util
@@ -852,14 +881,15 @@ def _auto_tune_sequence_batch_size(
         target_util * 100.0,
         max_util * 100.0,
         best_util * 100.0,
-        best_allocated / (1024 ** 3),
-        best_reserved / (1024 ** 3),
+        best_allocated / (1024**3),
+        best_reserved / (1024**3),
     )
     _AUTO_BATCH_TUNE_CACHE[cache_key] = best_batch
     return best_batch
 
 
 if TORCH_AVAILABLE:
+
     class MLP(nn.Module):
         def __init__(
             self,
@@ -888,7 +918,6 @@ if TORCH_AVAILABLE:
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             return self.head(self.backbone(x))
-
 
     class LSTM(nn.Module):
         def __init__(
@@ -922,7 +951,6 @@ if TORCH_AVAILABLE:
                 last_hidden = h_n[-1]
             return self.head(self.dropout(last_hidden))
 
-
     class GRU(nn.Module):
         def __init__(
             self,
@@ -954,7 +982,6 @@ if TORCH_AVAILABLE:
             else:
                 last_hidden = h_n[-1]
             return self.head(self.dropout(last_hidden))
-
 
     class CNN1D(nn.Module):
         def __init__(
@@ -988,21 +1015,23 @@ if TORCH_AVAILABLE:
             pooled = [torch.max(torch.relu(conv(x)), dim=2)[0] for conv in self.convs]
             return self.head(self.dropout(torch.cat(pooled, dim=1)))
 
-
     class PositionalEncoding(nn.Module):
-        def __init__(self, d_model: int, dropout_rate: float = 0.1, max_seq_len: int = 5000) -> None:
+        def __init__(
+            self, d_model: int, dropout_rate: float = 0.1, max_seq_len: int = 5000
+        ) -> None:
             super().__init__()
             self.dropout = nn.Dropout(dropout_rate)
             pe = torch.zeros(max_seq_len, d_model)
             position = torch.arange(0, max_seq_len, dtype=torch.float32).unsqueeze(1)
-            div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000.0) / d_model))
+            div_term = torch.exp(
+                torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000.0) / d_model)
+            )
             pe[:, 0::2] = torch.sin(position * div_term)
             pe[:, 1::2] = torch.cos(position * div_term)
             self.register_buffer("pe", pe.unsqueeze(0), persistent=False)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             return self.dropout(x + self.pe[:, : x.size(1)])
-
 
     class Transformer(nn.Module):
         def __init__(
@@ -1038,6 +1067,7 @@ if TORCH_AVAILABLE:
             return self.head(x)
 
 else:  # pragma: no cover
+
     class MLP:  # type: ignore[no-redef]
         pass
 
@@ -1147,21 +1177,33 @@ def train_pytorch_model(
                 hidden_dims=hidden_dims,
                 output_dim=loss_spec.output_dim,
             )
-            X_train_tensor = torch.as_tensor(_to_numpy_features(X_train), dtype=torch.float32, device=device)
+            X_train_tensor = torch.as_tensor(
+                _to_numpy_features(X_train), dtype=torch.float32, device=device
+            )
             y_train_np = _to_numpy_labels(y_train)
             if task_type == "multiclass_classification":
-                y_train_tensor = torch.as_tensor(y_train_np.reshape(-1), dtype=torch.long, device=device)
+                y_train_tensor = torch.as_tensor(
+                    y_train_np.reshape(-1), dtype=torch.long, device=device
+                )
             else:
-                y_train_tensor = torch.as_tensor(y_train_np.reshape(-1, 1), dtype=torch.float32, device=device)
+                y_train_tensor = torch.as_tensor(
+                    y_train_np.reshape(-1, 1), dtype=torch.float32, device=device
+                )
             X_val_tensor = None
             y_val_tensor = None
             if X_val is not None and y_val is not None:
-                X_val_tensor = torch.as_tensor(_to_numpy_features(X_val), dtype=torch.float32, device=device)
+                X_val_tensor = torch.as_tensor(
+                    _to_numpy_features(X_val), dtype=torch.float32, device=device
+                )
                 y_val_np = _to_numpy_labels(y_val)
                 if task_type == "multiclass_classification":
-                    y_val_tensor = torch.as_tensor(y_val_np.reshape(-1), dtype=torch.long, device=device)
+                    y_val_tensor = torch.as_tensor(
+                        y_val_np.reshape(-1), dtype=torch.long, device=device
+                    )
                 else:
-                    y_val_tensor = torch.as_tensor(y_val_np.reshape(-1, 1), dtype=torch.float32, device=device)
+                    y_val_tensor = torch.as_tensor(
+                        y_val_np.reshape(-1, 1), dtype=torch.float32, device=device
+                    )
             train_loader = None
             val_loader = None
             input_dim = int(X_train.shape[1])
@@ -1199,7 +1241,9 @@ def train_pytorch_model(
         model = model.to(device)
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         criterion = get_loss_fn(task_type, {"n_classes": n_classes})
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=3
+        )
         scaler = GradScaler(enabled=use_amp)
         best_monitor_loss = float("inf")
         best_state_dict = None
@@ -1256,7 +1300,9 @@ def train_pytorch_model(
                         monitor_loss = train_loss
                 else:
                     assert train_loader is not None
-                    non_blocking = bool(loader_settings.get("pin_memory", False)) and device.type == "cuda"
+                    non_blocking = (
+                        bool(loader_settings.get("pin_memory", False)) and device.type == "cuda"
+                    )
                     for batch in train_loader:
                         if len(batch) < 2:
                             continue
@@ -1299,7 +1345,9 @@ def train_pytorch_model(
                 scheduler.step(monitor_loss)
                 if monitor_loss < best_monitor_loss:
                     best_monitor_loss = monitor_loss
-                    best_state_dict = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                    best_state_dict = {
+                        k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                    }
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -1313,11 +1361,19 @@ def train_pytorch_model(
         model._loader_settings = dict(loader_settings)
         model._auto_batch_tune = bool(config.get("auto_batch_tune", True))
         model._target_vram_util = float(config.get("target_vram_util", 0.88))
-        model._train_target_vram_util = float(config.get("train_target_vram_util", config.get("target_vram_util", 0.88)))
-        model._predict_target_vram_util = float(config.get("predict_target_vram_util", config.get("target_vram_util", 0.88)))
+        model._train_target_vram_util = float(
+            config.get("train_target_vram_util", config.get("target_vram_util", 0.88))
+        )
+        model._predict_target_vram_util = float(
+            config.get("predict_target_vram_util", config.get("target_vram_util", 0.88))
+        )
         model._use_amp = bool(config.get("use_amp", False))
         model._use_tf32 = bool(config.get("use_tf32", False))
-        model._predict_batch_size = int(config.get("predict_batch_size", 0)) if int(config.get("predict_batch_size", 0)) > 0 else int(current_batch_size)
+        model._predict_batch_size = (
+            int(config.get("predict_batch_size", 0))
+            if int(config.get("predict_batch_size", 0)) > 0
+            else int(current_batch_size)
+        )
         model._task_type = task_type
         return model
 
@@ -1386,12 +1442,18 @@ def _ensure_sequence_predict_batch_size(
         return base
 
     loader_settings = dict(getattr(model, "_loader_settings", {}))
-    input_dim = int(next(iter(X_seq.feature_by_ticker.values())).shape[1]) if isinstance(X_seq, PanelSequenceStore) else int(np.asarray(X_seq).shape[-1])
+    input_dim = (
+        int(next(iter(X_seq.feature_by_ticker.values())).shape[1])
+        if isinstance(X_seq, PanelSequenceStore)
+        else int(np.asarray(X_seq).shape[-1])
+    )
     predict_config = {
         "seq_len": int(getattr(model, "_seq_len", 20)),
         "auto_batch_tune": True,
         "target_vram_util": float(getattr(model, "_target_vram_util", 0.88)),
-        "predict_target_vram_util": float(getattr(model, "_predict_target_vram_util", getattr(model, "_target_vram_util", 0.88))),
+        "predict_target_vram_util": float(
+            getattr(model, "_predict_target_vram_util", getattr(model, "_target_vram_util", 0.88))
+        ),
         "use_amp": bool(getattr(model, "_use_amp", False)),
         "use_tf32": bool(getattr(model, "_use_tf32", False)),
     }
@@ -1429,7 +1491,9 @@ def predict_pytorch_model_tabular_outputs(
     _require_torch("predict_pytorch_model_tabular")
     model.eval()
     X_tensor = torch.tensor(X.to_numpy(dtype=np.float32, copy=False), dtype=torch.float32)
-    batch_size = max(1, int(getattr(model, "_predict_batch_size", 16384 if device.type == "cuda" else 1024)))
+    batch_size = max(
+        1, int(getattr(model, "_predict_batch_size", 16384 if device.type == "cuda" else 1024))
+    )
     use_amp = bool(getattr(model, "_use_amp", False)) and device.type == "cuda"
     use_tf32 = bool(getattr(model, "_use_tf32", False))
     task_type = str(getattr(model, "_task_type", "binary_classification"))
@@ -1478,7 +1542,9 @@ def predict_pytorch_model_sequence_outputs(
     use_amp = bool(getattr(model, "_use_amp", False)) and device.type == "cuda"
     use_tf32 = bool(getattr(model, "_use_tf32", False))
     if isinstance(X_seq, PanelSequenceStore):
-        loader = make_panel_sequence_dataloader(X_seq, batch_size=batch_size, shuffle=False, **loader_settings)
+        loader = make_panel_sequence_dataloader(
+            X_seq, batch_size=batch_size, shuffle=False, **loader_settings
+        )
     else:
         loader = make_sequence_dataloader(
             np.asarray(X_seq, dtype=np.float32),
@@ -1623,26 +1689,42 @@ def make_model(candidate: Dict[str, Any], seed: int) -> Any:
             xgb_params.setdefault("eval_metric", "logloss")
             xgb_params.setdefault("verbosity", 0)
             return xgb.XGBClassifier(**xgb_params)
-        fallback = GradientBoostingRegressor(random_state=seed) if task_type == "regression" else GradientBoostingClassifier(random_state=seed)
+        fallback = (
+            GradientBoostingRegressor(random_state=seed)
+            if task_type == "regression"
+            else GradientBoostingClassifier(random_state=seed)
+        )
         return fallback
 
     raise ValueError(f"Unsupported model_type for make_model: {model_type}")
 
 
 def predict_dpoint(model: Any, X: pd.DataFrame) -> pd.Series:
-    X_values = X.to_numpy(dtype=np.float32, copy=False) if isinstance(X, pd.DataFrame) else np.asarray(X, dtype=np.float32)
+    X_values = (
+        X.to_numpy(dtype=np.float32, copy=False)
+        if isinstance(X, pd.DataFrame)
+        else np.asarray(X, dtype=np.float32)
+    )
     task_type = str(getattr(model, "_task_type", "binary_classification"))
     if is_torch_model_instance(model):
         device = resolve_torch_device(str(getattr(model, "_device_preference", "auto")))
         if getattr(model, "_is_panel_sequence_model", False):
-            raise ValueError("predict_dpoint does not support panel sequence models. Use predict_panel instead.")
+            raise ValueError(
+                "predict_dpoint does not support panel sequence models. Use predict_panel instead."
+            )
         if isinstance(model, (LSTM, GRU, CNN1D, Transformer)):
-            return predict_pytorch_model(model, pd.DataFrame(X_values), device, seq_len=int(getattr(model, "_seq_len", 20)))
+            return predict_pytorch_model(
+                model, pd.DataFrame(X_values), device, seq_len=int(getattr(model, "_seq_len", 20))
+            )
         return predict_pytorch_model_tabular(model, pd.DataFrame(X_values), device)
     if hasattr(model, "predict_proba"):
         proba = model.predict_proba(X_values)
         if task_type == "multiclass_classification":
-            return pd.Series(multiclass_probabilities_to_score(proba), index=getattr(X, "index", None), name="dpoint")
+            return pd.Series(
+                multiclass_probabilities_to_score(proba),
+                index=getattr(X, "index", None),
+                name="dpoint",
+            )
         return pd.Series(proba[:, 1], index=getattr(X, "index", None), name="dpoint")
     pred = model.predict(X_values)
     return pd.Series(pred, index=getattr(X, "index", None), name="dpoint")
@@ -1659,8 +1741,12 @@ def _torch_feature_meta(model: Any) -> Dict[str, Any]:
         "loader_settings": dict(getattr(model, "_loader_settings", {})),
         "auto_batch_tune": bool(getattr(model, "_auto_batch_tune", True)),
         "target_vram_util": float(getattr(model, "_target_vram_util", 0.88)),
-        "train_target_vram_util": float(getattr(model, "_train_target_vram_util", getattr(model, "_target_vram_util", 0.88))),
-        "predict_target_vram_util": float(getattr(model, "_predict_target_vram_util", getattr(model, "_target_vram_util", 0.88))),
+        "train_target_vram_util": float(
+            getattr(model, "_train_target_vram_util", getattr(model, "_target_vram_util", 0.88))
+        ),
+        "predict_target_vram_util": float(
+            getattr(model, "_predict_target_vram_util", getattr(model, "_target_vram_util", 0.88))
+        ),
         "use_amp": bool(getattr(model, "_use_amp", False)),
         "use_tf32": bool(getattr(model, "_use_tf32", False)),
         "task_type": str(getattr(model, "_task_type", "binary_classification")),
@@ -1710,7 +1796,9 @@ def _build_saved_torch_model(model_config: Dict[str, Any], feature_meta: Dict[st
     _require_torch("load_saved_model")
     model_type = str(model_config.get("model_type", "mlp")).lower()
     model_params = dict(model_config.get("model_params", {}))
-    task_type = str(feature_meta.get("task_type", model_config.get("task_type", "binary_classification")))
+    task_type = str(
+        feature_meta.get("task_type", model_config.get("task_type", "binary_classification"))
+    )
     n_classes = feature_meta.get("n_classes", model_config.get("n_classes"))
     feature_names = list(feature_meta.get("feature_names", []))
     input_dim = len(feature_names)
@@ -1738,14 +1826,24 @@ def _build_saved_torch_model(model_config: Dict[str, Any], feature_meta: Dict[st
     model._feature_names = feature_names
     model._seq_len = int(feature_meta.get("seq_len", model_params.get("seq_len", 20)))
     model._is_panel_sequence_model = bool(feature_meta.get("is_panel_sequence_model", False))
-    model._device_preference = str(feature_meta.get("device_preference", model_config.get("device", "auto")))
-    model._trained_batch_size = int(feature_meta.get("trained_batch_size", model_params.get("batch_size", 64)))
-    model._predict_batch_size = int(feature_meta.get("predict_batch_size", model._trained_batch_size))
+    model._device_preference = str(
+        feature_meta.get("device_preference", model_config.get("device", "auto"))
+    )
+    model._trained_batch_size = int(
+        feature_meta.get("trained_batch_size", model_params.get("batch_size", 64))
+    )
+    model._predict_batch_size = int(
+        feature_meta.get("predict_batch_size", model._trained_batch_size)
+    )
     model._loader_settings = dict(feature_meta.get("loader_settings", {}))
     model._auto_batch_tune = bool(feature_meta.get("auto_batch_tune", True))
     model._target_vram_util = float(feature_meta.get("target_vram_util", 0.88))
-    model._train_target_vram_util = float(feature_meta.get("train_target_vram_util", model._target_vram_util))
-    model._predict_target_vram_util = float(feature_meta.get("predict_target_vram_util", model._target_vram_util))
+    model._train_target_vram_util = float(
+        feature_meta.get("train_target_vram_util", model._target_vram_util)
+    )
+    model._predict_target_vram_util = float(
+        feature_meta.get("predict_target_vram_util", model._target_vram_util)
+    )
     model._use_amp = bool(feature_meta.get("use_amp", False))
     model._use_tf32 = bool(feature_meta.get("use_tf32", False))
     model._task_type = task_type
@@ -1761,7 +1859,11 @@ def load_saved_model(path: str) -> Any:
         state_path = os.path.join(path, "model_state.pt")
         config_path = os.path.join(path, "model_config.json")
         feature_meta_path = os.path.join(path, "feature_meta.json")
-        if os.path.exists(state_path) and os.path.exists(config_path) and os.path.exists(feature_meta_path):
+        if (
+            os.path.exists(state_path)
+            and os.path.exists(config_path)
+            and os.path.exists(feature_meta_path)
+        ):
             with open(config_path, "r", encoding="utf-8") as f:
                 model_config = json.load(f)
             with open(feature_meta_path, "r", encoding="utf-8") as f:

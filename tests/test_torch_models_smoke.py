@@ -1,6 +1,7 @@
 """
 测试Torch模型smoke测试
 """
+
 import os
 
 import numpy as np
@@ -23,7 +24,7 @@ class TestTorchModelsSmoke:
 
         X = pd.DataFrame(
             np.random.randn(n_samples, n_features),
-            columns=[f"feature_{i}" for i in range(n_features)]
+            columns=[f"feature_{i}" for i in range(n_features)],
         )
         y = pd.Series((np.random.randn(n_samples) > 0).astype(float))
 
@@ -216,12 +217,12 @@ class TestTorchModelsSmoke:
                 util = 0.90
             else:
                 util = 1.03
-            allocated = int(util * 8 * (1024 ** 3))
-            reserved = allocated + 128 * (1024 ** 2)
+            allocated = int(util * 8 * (1024**3))
+            reserved = allocated + 128 * (1024**2)
             return util, allocated, reserved
 
         monkeypatch.setattr(models, "_probe_sequence_batch_memory", fake_probe)
-        monkeypatch.setattr(models, "_cuda_total_memory", lambda device: 8 * (1024 ** 3))
+        monkeypatch.setattr(models, "_cuda_total_memory", lambda device: 8 * (1024**3))
 
         selected = models._auto_tune_sequence_batch_size(
             mode="train",
@@ -289,18 +290,24 @@ class TestTorchModelsSmoke:
             probe_calls["count"] += 1
             batch_size = kwargs["batch_size"]
             util = 0.89 if batch_size >= 832 else 0.40
-            allocated = int(util * 8 * (1024 ** 3))
+            allocated = int(util * 8 * (1024**3))
             reserved = allocated
             return util, allocated, reserved
 
         monkeypatch.setattr(models, "_probe_sequence_batch_memory", fake_probe)
-        monkeypatch.setattr(models, "_cuda_total_memory", lambda device: 8 * (1024 ** 3))
+        monkeypatch.setattr(models, "_cuda_total_memory", lambda device: 8 * (1024**3))
 
         common_kwargs = dict(
             mode="train",
             model_type="lstm",
             input_dim=16,
-            config={"auto_batch_tune": True, "target_vram_util": 0.88, "seq_len": 10, "hidden_dim": 32, "num_layers": 1},
+            config={
+                "auto_batch_tune": True,
+                "target_vram_util": 0.88,
+                "seq_len": 10,
+                "hidden_dim": 32,
+                "num_layers": 1,
+            },
             X=np.zeros((4000, 10, 16), dtype=np.float32),
             y=np.zeros(4000, dtype=np.float32),
             device=FakeDevice(),
@@ -345,7 +352,9 @@ class TestTorchModelsSmoke:
             },
         }
 
-        model, _ = train_panel_model(panel_X, y, config, date_col="date", ticker_col="ticker", seed=42)
+        model, _ = train_panel_model(
+            panel_X, y, config, date_col="date", ticker_col="ticker", seed=42
+        )
 
         saved_path = save_trained_model(model, config, os.path.join(local_tmpdir, "torch_model"))
         assert os.path.isdir(saved_path)
@@ -380,7 +389,9 @@ class TestTorchModelsSmoke:
         assert pred["probability_available"].eq(False).all()
         assert pred["proba"].isna().all()
 
-    def test_predict_panel_exposes_probabilities_for_torch_binary_tabular_model(self, tiny_tabular_data):
+    def test_predict_panel_exposes_probabilities_for_torch_binary_tabular_model(
+        self, tiny_tabular_data
+    ):
         from panel_trainer import predict_panel, train_panel_model
 
         X, y = tiny_tabular_data
@@ -401,7 +412,9 @@ class TestTorchModelsSmoke:
             },
         }
 
-        model, _ = train_panel_model(panel_X, y, config, date_col="date", ticker_col="ticker", seed=42)
+        model, _ = train_panel_model(
+            panel_X, y, config, date_col="date", ticker_col="ticker", seed=42
+        )
         pred = predict_panel(model, panel_X, date_col="date", ticker_col="ticker")
 
         assert pred["probability_available"].eq(True).all()

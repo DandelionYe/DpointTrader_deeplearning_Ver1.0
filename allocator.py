@@ -15,6 +15,7 @@
     >>> orders = allocate_orders(portfolio, prices, total_equity)
     >>> rebalance_orders = compute_rebalance_orders(current_holdings, target_portfolio)
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,6 +43,7 @@ class Order:
         estimated_value: 预估金额
         priority: 优先级
     """
+
     ticker: str
     action: str
     shares: int
@@ -65,6 +67,7 @@ class AllocationResult:
         cash_remaining: 剩余现金
         notes: 注释
     """
+
     orders: List[Order] = field(default_factory=list)
     total_buy_value: float = 0.0
     total_sell_value: float = 0.0
