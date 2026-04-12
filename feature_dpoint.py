@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 import pandas as pd
 
 from labeler import build_labels
-from tasks import LabelSpec, infer_task_type
+from tasks import LabelSpec
 
 
 @dataclass
@@ -38,6 +38,7 @@ def build_features_and_labels_panel(
     label_mode: str = "binary_next_close_up",
     include_cross_section: bool = True,
     feature_config: Optional[Dict] = None,
+    label_spec: Optional[LabelSpec] = None,
     label_horizon_days: int = 1,
     max_label_date: Optional[pd.Timestamp] = None,
     return_label_end_date: bool = False,
@@ -161,14 +162,14 @@ def build_features_and_labels_panel(
     feature_cols = [c for c in all_feature_names if c in df.columns]
     X = df[[date_col, ticker_col] + feature_cols].copy()
 
-    label_spec = LabelSpec(
-        task_type=infer_task_type(label_mode),
+    resolved_label_spec = label_spec or LabelSpec(
+        task_type=str(config.get("task_type", "binary_classification")),
         label_mode=label_mode,
         horizon_days=label_horizon_days,
     )
     y, full_label_meta, _ = build_labels(
         df,
-        label_spec,
+        resolved_label_spec,
         date_col=date_col,
         ticker_col=ticker_col,
         close_col="close_qfq",
@@ -188,7 +189,7 @@ def build_features_and_labels_panel(
         time_series_feature_names=ts_feature_names,
         cross_section_feature_names=cs_feature_names,
         optional_inputs_used=optional_inputs_used,
-        label_mode=label_mode,
+        label_mode=resolved_label_spec.label_mode,
         basket_name=str(config.get("basket_name", "")),
         n_tickers=int(df[ticker_col].nunique()),
         n_samples=len(X),
@@ -201,7 +202,8 @@ def build_features_and_labels_panel(
             "use_ta_indicators": use_ta,
             "ta_windows": ta_windows,
             "include_cross_section": include_cross_section,
-            "label_horizon_days": label_horizon_days,
+            "label_horizon_days": resolved_label_spec.horizon_days,
+            "task_type": resolved_label_spec.task_type,
         },
         notes=notes,
     )

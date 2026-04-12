@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import shutil
 import uuid
@@ -132,6 +133,11 @@ class TestRollingRetrainer:
             assert os.path.exists(os.path.join(snapshot_dir, "model.joblib"))
             assert os.path.exists(os.path.join(snapshot_dir, "scores.csv"))
             assert os.path.exists(os.path.join(snapshot_dir, "equity_curve.csv"))
+            with open(os.path.join(snapshot_dir, "manifest.json"), "r", encoding="utf-8") as fh:
+                manifest = json.load(fh)
+            assert "contracts" in manifest
+            assert manifest["contracts"]["training"]["label_horizon_days"] == 1
+            assert manifest["contracts"]["data"]["data_hash"]
 
     def test_train_end_date_before_eval_date(self, sample_panel, mock_args, local_tmpdir):
         config = RollingConfig(
@@ -145,3 +151,43 @@ class TestRollingRetrainer:
             assert train_end < eval_start
             assert pd.Timestamp(snapshot.metrics["train_label_end_date_max"]) <= train_end
             assert pd.Timestamp(snapshot.metrics["eval_label_end_date_max"]) >= eval_start
+
+    def test_top_level_rolling_manifest_writes_contracts(
+        self, sample_panel, mock_args, local_tmpdir
+    ):
+        from basket_loader import BasketMeta
+        from main_basket import _run_rolling_retrain
+
+        rolling_args = argparse.Namespace(**vars(mock_args))
+        rolling_args.output_dir = local_tmpdir
+        rolling_args.rolling_mode = "expanding"
+        rolling_args.rolling_window_length = 252
+        rolling_args.retrain_frequency = "monthly"
+        rolling_args.min_history_days = 120
+        rolling_args.basket_path = local_tmpdir
+        rolling_args.data_root = local_tmpdir
+        rolling_args.basket = "test_basket"
+
+        basket_meta = BasketMeta(
+            basket_name="test_basket",
+            basket_path=local_tmpdir,
+            n_tickers=int(sample_panel["ticker"].nunique()),
+            tickers=sorted(sample_panel["ticker"].unique().tolist()),
+            date_range=(str(sample_panel["date"].min()), str(sample_panel["date"].max())),
+        )
+
+        _run_rolling_retrain(sample_panel, rolling_args, basket_meta)
+
+        exp_dirs = sorted(
+            path
+            for path in os.listdir(local_tmpdir)
+            if path.startswith("exp_") and os.path.isdir(os.path.join(local_tmpdir, path))
+        )
+        assert exp_dirs
+        manifest_path = os.path.join(local_tmpdir, exp_dirs[-1], "manifest.json")
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+
+        assert "contracts" in manifest
+        assert manifest["contracts"]["training"]["label_horizon_days"] == 1
+        assert manifest["contracts"]["data"]["data_hash"]

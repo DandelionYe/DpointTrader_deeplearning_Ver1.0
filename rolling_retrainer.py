@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import pandas as pd
 
 from backtester_engine import backtest_from_scores, prepare_scores_for_backtest
+from experiment_contract import build_run_contract, contract_to_dict
 from models import save_trained_model
 from panel_trainer import (
     align_scores_with_labels,
@@ -20,6 +21,7 @@ from panel_trainer import (
 )
 from portfolio_builder import PortfolioConfig
 from search_engine import run_search
+from tasks import LabelSpec, resolve_label_spec
 from utils import create_manifest, create_snapshot_dir
 
 logger = logging.getLogger(__name__)
@@ -98,8 +100,8 @@ class RollingRetrainer:
         args: argparse.Namespace,
         feature_config: Dict[str, Any],
         *,
-        label_mode: str,
-    ) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+        label_spec: LabelSpec,
+    ) -> Tuple[pd.DataFrame, pd.Series, Any, pd.DataFrame]:
         from feature_dpoint import build_features_and_labels_panel
 
         train_panel = self.get_training_window(panel_df, retrain_date)
@@ -108,13 +110,14 @@ class RollingRetrainer:
             feature_config,
             date_col="date",
             ticker_col="ticker",
-            label_mode=label_mode,
+            label_mode=label_spec.label_mode,
             include_cross_section=bool(args.include_cross_section),
+            label_spec=label_spec,
             label_horizon_days=self._label_horizon_days(args),
             max_label_date=retrain_date,
             return_label_end_date=True,
         )
-        train_X, train_y, _, train_label_meta = cast(
+        train_X, train_y, train_feature_meta, train_label_meta = cast(
             Tuple[pd.DataFrame, pd.Series, Any, pd.DataFrame],
             train_result,
         )
@@ -123,7 +126,7 @@ class RollingRetrainer:
             assert pd.Timestamp(train_label_meta["label_end_date"].max()) <= pd.Timestamp(
                 retrain_date
             )
-        return train_X, train_y, train_label_meta
+        return train_X, train_y, train_feature_meta, train_label_meta
 
     def _build_evaluation_snapshot(
         self,
@@ -133,7 +136,7 @@ class RollingRetrainer:
         args: argparse.Namespace,
         feature_config: Dict[str, Any],
         *,
-        label_mode: str,
+        label_spec: LabelSpec,
     ) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
         from feature_dpoint import build_features_and_labels_panel
 
@@ -143,8 +146,9 @@ class RollingRetrainer:
             feature_config,
             date_col="date",
             ticker_col="ticker",
-            label_mode=label_mode,
+            label_mode=label_spec.label_mode,
             include_cross_section=bool(args.include_cross_section),
+            label_spec=label_spec,
             label_horizon_days=self._label_horizon_days(args),
             max_label_date=eval_end_date,
             return_label_end_date=True,
@@ -207,12 +211,14 @@ class RollingRetrainer:
 
             feature_config = build_feature_config(args)
             resolved_label_mode = resolve_label_mode_alias(args.label_mode)
-            train_X, train_y, train_label_meta = self._build_training_snapshot(
+            label_spec = resolve_label_spec(args)
+            label_spec.label_mode = resolved_label_mode
+            train_X, train_y, train_feature_meta, train_label_meta = self._build_training_snapshot(
                 panel_df,
                 retrain_date,
                 args,
                 feature_config,
-                label_mode=resolved_label_mode,
+                label_spec=label_spec,
             )
             eval_X, eval_y, eval_label_meta = self._build_evaluation_snapshot(
                 panel_df,
@@ -220,7 +226,7 @@ class RollingRetrainer:
                 eval_end_date,
                 args,
                 feature_config,
-                label_mode=resolved_label_mode,
+                label_spec=label_spec,
             )
             if train_X.empty or eval_X.empty:
                 continue
@@ -330,6 +336,13 @@ class RollingRetrainer:
             metrics["train_label_end_date_max"] = str(train_label_meta["label_end_date"].max())
             metrics["eval_sample_date_min"] = str(eval_X["date"].min())
             metrics["eval_label_end_date_max"] = str(eval_label_meta["label_end_date"].max())
+            snapshot_contract = build_run_contract(
+                train_panel,
+                feature_meta=train_feature_meta,
+                args=args,
+                model_config=search_result.best_config,
+                feature_config=feature_config,
+            )
             create_manifest(
                 snapshot_dir,
                 run_id=snapshot_idx + 1,
@@ -353,6 +366,7 @@ class RollingRetrainer:
                     "best_seed": search_result.best_seed,
                     "best_model_type": search_result.best_config.get("model_type"),
                 },
+                contracts=contract_to_dict(snapshot_contract),
             )
 
             snapshots.append(

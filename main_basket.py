@@ -742,6 +742,30 @@ def _run_rolling_retrain(
     )
     retrainer = RollingRetrainer(config=rolling_config, experiment_dir=experiment_dir)
     snapshots = retrainer.run(panel_df, args)
+    feature_config = build_feature_config(args)
+    rolling_label_spec = resolve_label_spec(args)
+    rolling_label_spec.label_mode = resolve_label_mode_alias(args.label_mode)
+    rolling_feature_result = build_features_and_labels_panel(
+        panel_df,
+        feature_config,
+        date_col="date",
+        ticker_col="ticker",
+        label_mode=rolling_label_spec.label_mode,
+        include_cross_section=bool(args.include_cross_section),
+        label_spec=rolling_label_spec,
+        label_horizon_days=max(1, int(getattr(args, "label_horizon_days", 1))),
+    )
+    _, _, rolling_feature_meta = cast(
+        Tuple[pd.DataFrame, pd.Series, Any],
+        rolling_feature_result,
+    )
+    rolling_contract = build_run_contract(
+        panel_df,
+        feature_meta=rolling_feature_meta,
+        args=args,
+        model_config=build_model_config(args),
+        feature_config=feature_config,
+    )
     create_manifest(
         experiment_dir,
         run_id=1,
@@ -765,6 +789,7 @@ def _run_rolling_retrain(
             "retrain_frequency": args.retrain_frequency,
             "min_history_days": args.min_history_days,
         },
+        contracts=contract_to_dict(rolling_contract),
     )
     logger.info("Results saved to: %s", experiment_dir)
     logger.info("Done!")
@@ -805,13 +830,16 @@ def _run_single_experiment(
     default_end = window_config["default_end"]
 
     feature_config = build_feature_config(args)
+    label_spec = resolve_label_spec(args)
+    label_spec.label_mode = resolve_label_mode_alias(args.label_mode)
     feature_result = build_features_and_labels_panel(
         panel_df,
         feature_config,
         date_col="date",
         ticker_col="ticker",
-        label_mode=resolve_label_mode_alias(args.label_mode),
+        label_mode=label_spec.label_mode,
         include_cross_section=bool(args.include_cross_section),
+        label_spec=label_spec,
         label_horizon_days=max(1, int(getattr(args, "label_horizon_days", 1))),
     )
     X, y, feature_meta = cast(Tuple[pd.DataFrame, pd.Series, Any], feature_result)

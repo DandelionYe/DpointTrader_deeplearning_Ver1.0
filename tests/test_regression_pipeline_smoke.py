@@ -3,6 +3,7 @@ import pandas as pd
 
 from feature_dpoint import build_features_and_labels_panel
 from panel_trainer import evaluate_scores_df, predict_panel, train_panel_model
+from tasks import LabelSpec
 
 
 def _sample_panel() -> pd.DataFrame:
@@ -45,6 +46,11 @@ def test_regression_pipeline_smoke():
         ticker_col="ticker",
         label_mode="regression_return",
         include_cross_section=True,
+        label_spec=LabelSpec(
+            task_type="regression",
+            label_mode="regression_return",
+            horizon_days=1,
+        ),
         label_horizon_days=1,
     )
     config = {

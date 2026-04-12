@@ -117,6 +117,22 @@ def test_volume_cap_allows_partial_fill_when_enabled():
     assert fill.filled_shares == 300
 
 
+def test_volume_cap_rejects_when_partial_fill_disabled():
+    price_df, prev_date, trade_date = _price_panel(prev_close=10.0, open_price=10.0, volume=3_500)
+    constraints = TradingConstraints(
+        max_participation_rate=0.10, allow_partial_fill=False, min_trade_value=0.0
+    )
+    engine = ExecutionEngine(constraints=constraints)
+    prev_close = float(price_df.loc[price_df["date"] == prev_date, "close_qfq"].iloc[0])
+
+    fill = engine.execute_order(
+        Order(ticker="A", action="buy", shares=1_000, date=trade_date), price_df, prev_close
+    )
+
+    assert fill.status == "rejected"
+    assert fill.reject_reason == "volume_cap"
+
+
 def test_board_lot_round_to_zero_rejects_small_order():
     price_df, prev_date, trade_date = _price_panel(prev_close=10.0, open_price=10.0)
     engine = ExecutionEngine(constraints=TradingConstraints(min_trade_value=0.0))
@@ -206,3 +222,25 @@ def test_prepare_scores_for_backtest_adds_tradeability_diagnostics():
     assert "resolved_limit_up_price" in prepared.columns
     assert "resolved_limit_down_price" in prepared.columns
     assert pd.Timestamp(prepared["trade_date"].iloc[0]) == signal_trade_date
+
+
+def test_prepare_scores_for_backtest_sets_tradeability_schema_values():
+    panel_df, _, signal_trade_date = _price_panel(prev_close=10.0, open_price=11.0)
+    scores_df = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2024-01-02")],
+            "ticker": ["A"],
+            "score": [1.0],
+        }
+    )
+
+    prepared = prepare_scores_for_backtest(
+        panel_df, scores_df, execution_lag_days=1, drop_untradable_signals=False
+    )
+
+    row = prepared.iloc[0]
+    assert pd.Timestamp(row["trade_date"]) == signal_trade_date
+    assert bool(row["is_tradeable"]) is False
+    assert row["expected_drop_reason"] == "limit_up"
+    assert pd.notna(row["resolved_limit_up_price"])
+    assert pd.notna(row["resolved_limit_down_price"])

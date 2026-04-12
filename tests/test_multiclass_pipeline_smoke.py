@@ -3,7 +3,7 @@ import pandas as pd
 
 from feature_dpoint import build_features_and_labels_panel
 from panel_trainer import evaluate_scores_df, predict_panel, train_panel_model
-from tasks import multiclass_probabilities_to_score
+from tasks import LabelSpec, multiclass_probabilities_to_score
 
 
 def _sample_panel() -> pd.DataFrame:
@@ -46,6 +46,12 @@ def test_multiclass_pipeline_smoke():
         ticker_col="ticker",
         label_mode="multiclass_3",
         include_cross_section=True,
+        label_spec=LabelSpec(
+            task_type="multiclass_classification",
+            label_mode="multiclass_3",
+            horizon_days=1,
+            n_classes=3,
+        ),
         label_horizon_days=1,
     )
     config = {
