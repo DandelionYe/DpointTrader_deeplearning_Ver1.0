@@ -7,7 +7,7 @@ import logging
 import os
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
 
@@ -24,6 +24,7 @@ from constants import (
     DEFAULT_TOP_K,
     DEFAULT_WEIGHTING,
 )
+from experiment_contract import build_run_contract, contract_to_dict, validate_continue_compatibility
 from excel_reporter import save_to_excel
 from feature_dpoint import build_features_and_labels_panel
 from html_reporter import generate_html_report
@@ -36,6 +37,7 @@ from rolling_retrainer import RollingConfig, RollingRetrainer
 from search_engine import run_search
 from search_space import build_base_model_config
 from splitters import build_date_splits, final_holdout_split_by_date
+from tasks import resolve_label_spec, resolve_metric_spec, validate_primary_metric
 from utils import (
     create_experiment_dir,
     create_manifest,
@@ -79,6 +81,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cash_buffer", type=float, default=0.05)
 
     parser.add_argument("--label_mode", type=str, default=DEFAULT_LABEL_MODE)
+    parser.add_argument("--task_type", type=str, default=None)
+    parser.add_argument("--label_horizon_days", type=int, default=1)
+    parser.add_argument("--primary_metric", type=str, default="auto")
     parser.add_argument("--include_cross_section", type=int, default=1)
 
     parser.add_argument("--initial_cash", type=float, default=100000.0)
@@ -95,6 +100,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--continue_from", type=str, default=None)
     parser.add_argument("--additional_runs", type=int, default=50)
+    parser.add_argument("--continue_strict", type=int, choices=[0, 1], default=1)
+    parser.add_argument("--allow_feature_contract_mismatch", type=int, choices=[0, 1], default=0)
+    parser.add_argument("--allow_data_contract_mismatch", type=int, choices=[0, 1], default=0)
 
     parser.add_argument(
         "--model_type",
@@ -146,7 +154,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inner_embargo_days", type=int, default=None)
     parser.add_argument("--n_outer_folds", type=int, default=3)
     parser.add_argument("--n_inner_folds", type=int, default=2)
-    parser.add_argument("--selection_metric", choices=["rank_ic_mean", "topk_return_mean"], default="rank_ic_mean")
+    parser.add_argument("--selection_metric", type=str, default="auto")
 
     parser.add_argument("--run_mode", choices=["single", "rolling"], default="single")
     parser.add_argument("--rolling_mode", choices=["expanding", "rolling"], default="expanding")
@@ -242,19 +250,27 @@ def build_feature_config(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def build_model_config(args: argparse.Namespace) -> Dict[str, Any]:
+    label_spec = resolve_label_spec(args)
+    xgb_eval_metric = (
+        "rmse"
+        if label_spec.task_type == "regression"
+        else "mlogloss"
+        if label_spec.task_type == "multiclass_classification"
+        else "logloss"
+    )
     cpu_threads = max(1, args.cpu_threads)
     sequence_hidden_dim = args.hidden_dim
     sequence_batch_size = args.batch_size
     predict_batch_size = int(getattr(args, "predict_batch_size", 0))
     auto_batch_tune = bool(getattr(args, "auto_batch_tune", 1))
-    target_vram_util = float(getattr(args, "target_vram_util", 0.88))
+    target_vram_util = float(cast(Any, getattr(args, "target_vram_util", 0.88)))
     train_target_vram_util = float(
-        getattr(args, "train_target_vram_util", None)
+        cast(Any, getattr(args, "train_target_vram_util", None))
         if getattr(args, "train_target_vram_util", None) is not None
         else target_vram_util
     )
     predict_target_vram_util = float(
-        getattr(args, "predict_target_vram_util", None)
+        cast(Any, getattr(args, "predict_target_vram_util", None))
         if getattr(args, "predict_target_vram_util", None) is not None
         else target_vram_util
     )
@@ -270,7 +286,12 @@ def build_model_config(args: argparse.Namespace) -> Dict[str, Any]:
         if not hidden_dims:
             hidden_dims = [args.hidden_dim]
         return {
+            "task_type": label_spec.task_type,
+            "n_classes": label_spec.n_classes,
             "model_type": "mlp",
+            "label_mode": label_spec.label_mode,
+            "label_horizon_days": label_spec.horizon_days,
+            "primary_metric": getattr(args, "primary_metric", "auto"),
             "device": args.device,
             "model_params": {
                 "hidden_dim": args.hidden_dim,
@@ -291,7 +312,12 @@ def build_model_config(args: argparse.Namespace) -> Dict[str, Any]:
         }
     if args.model_type in {"lstm", "gru", "cnn", "transformer"}:
         return {
+            "task_type": label_spec.task_type,
+            "n_classes": label_spec.n_classes,
             "model_type": args.model_type,
+            "label_mode": label_spec.label_mode,
+            "label_horizon_days": label_spec.horizon_days,
+            "primary_metric": getattr(args, "primary_metric", "auto"),
             "device": args.device,
             "model_params": {
                 "dropout_rate": args.dropout_rate,
@@ -318,7 +344,12 @@ def build_model_config(args: argparse.Namespace) -> Dict[str, Any]:
             },
         }
     return {
+        "task_type": label_spec.task_type,
         "model_type": "xgb",
+        "n_classes": label_spec.n_classes,
+        "label_mode": label_spec.label_mode,
+        "label_horizon_days": label_spec.horizon_days,
+        "primary_metric": getattr(args, "primary_metric", "auto"),
         "device": "cpu",
         "model_params": {
             "n_estimators": args.xgb_n_estimators,
@@ -329,7 +360,7 @@ def build_model_config(args: argparse.Namespace) -> Dict[str, Any]:
             "random_state": args.seed,
             "n_jobs": cpu_threads,
             "tree_method": "hist",
-            "eval_metric": "logloss",
+            "eval_metric": xgb_eval_metric,
             "verbosity": 0,
         },
     }
@@ -413,6 +444,7 @@ def build_split_plan(
         inner_embargo_days=getattr(args, "inner_embargo_days", None),
     )
 
+    indexed_splits: Any
     if args.split_mode == "nested_wf":
         indexed_splits = nested_dates_to_indices(search_X, date_splits, date_col=date_col)
     else:
@@ -531,6 +563,16 @@ def resolve_label_mode_alias(label_mode: str) -> str:
 
 
 def normalize_mode_args(args: argparse.Namespace) -> argparse.Namespace:
+    label_spec = resolve_label_spec(args)
+    args.task_type = label_spec.task_type
+    args.label_horizon_days = label_spec.horizon_days
+    metric_spec = resolve_metric_spec(args.task_type, args)
+    args.primary_metric = metric_spec.primary_metric
+    selection_metric = str(getattr(args, "selection_metric", "auto"))
+    if selection_metric == "auto":
+        args.selection_metric = metric_spec.primary_metric
+    else:
+        validate_primary_metric(args.task_type, selection_metric)
     if args.mode == "continue":
         if not args.continue_from:
             args.continue_from = "latest"
@@ -541,9 +583,9 @@ def normalize_mode_args(args: argparse.Namespace) -> argparse.Namespace:
 
 def load_previous_experiment(
     args: argparse.Namespace,
-) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[str], int]:
+) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str], int]:
     if not args.continue_from:
-        return None, None, None, 0
+        return None, None, None, None, 0
     if args.continue_from == "latest":
         exp_dirs = sorted(glob.glob(os.path.join(args.output_dir, "exp_*")))
         if not exp_dirs:
@@ -555,13 +597,14 @@ def load_previous_experiment(
         raise FileNotFoundError(f"Previous experiment dir not found: {prev_exp_dir}")
 
     manifest_path = os.path.join(prev_exp_dir, "manifest.json")
+    prev_manifest: Optional[Dict[str, Any]] = None
     prev_best_config: Optional[Dict[str, Any]] = None
     completed_search_runs = 0
     if os.path.exists(manifest_path):
         with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
-        prev_best_config = manifest.get("best_config")
-        completed_search_runs = int(manifest.get("search_runs_completed", 0) or 0)
+            prev_manifest = json.load(f)
+        prev_best_config = prev_manifest.get("best_config")
+        completed_search_runs = int(prev_manifest.get("search_runs_completed", 0) or 0)
 
     prev_model_path = None
     models_dir = os.path.join(prev_exp_dir, "models")
@@ -578,7 +621,7 @@ def load_previous_experiment(
             if os.path.exists(os.path.join(candidate, "model_state.pt")):
                 prev_model_path = candidate
                 break
-    return prev_exp_dir, prev_best_config, prev_model_path, completed_search_runs
+    return prev_exp_dir, prev_best_config, prev_manifest, prev_model_path, completed_search_runs
 
 
 def _build_search_base_config(args: argparse.Namespace, prev_best_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -674,14 +717,19 @@ def _run_single_experiment(
     window_config: Dict[str, pd.Timestamp],
 ) -> None:
     os.makedirs(args.output_dir, exist_ok=True)
-    prev_exp_dir, prev_best_config, prev_model_path, completed_search_runs = load_previous_experiment(args)
+    prev_exp_dir, prev_best_config, prev_manifest, prev_model_path, completed_search_runs = load_previous_experiment(args)
     continue_mode = prev_exp_dir is not None
     if continue_mode:
         logger.info("Continue mode - source experiment: %s", prev_exp_dir)
         logger.info("Completed search runs from previous manifest: %s", completed_search_runs)
 
     basket_path = args.basket_path or resolve_basket_path(args.data_root, args.basket)
-    experiment_dir = create_continue_run_dir(prev_exp_dir) if continue_mode else create_experiment_dir(args.output_dir, _next_experiment_id(args.output_dir))
+    if continue_mode:
+        if prev_exp_dir is None:
+            raise ValueError("continue mode requires a previous experiment directory")
+        experiment_dir = create_continue_run_dir(prev_exp_dir)
+    else:
+        experiment_dir = create_experiment_dir(args.output_dir, _next_experiment_id(args.output_dir))
     logger.info("Experiment dir: %s", experiment_dir)
 
     research_start = window_config["research_start"]
@@ -692,14 +740,16 @@ def _run_single_experiment(
     default_end = window_config["default_end"]
 
     feature_config = build_feature_config(args)
-    X, y, feature_meta = build_features_and_labels_panel(
+    feature_result = build_features_and_labels_panel(
         panel_df,
         feature_config,
         date_col="date",
         ticker_col="ticker",
         label_mode=resolve_label_mode_alias(args.label_mode),
         include_cross_section=bool(args.include_cross_section),
+        label_horizon_days=max(1, int(getattr(args, "label_horizon_days", 1))),
     )
+    X, y, feature_meta = cast(Tuple[pd.DataFrame, pd.Series, Any], feature_result)
     X, y = filter_feature_window(X, y, research_start, research_end, date_col="date")
     logger.info("Features: %s", len(feature_meta.feature_names))
     logger.info("Samples: %s", len(X))
@@ -722,6 +772,22 @@ def _run_single_experiment(
 
     search_runs = args.additional_runs if continue_mode else args.runs
     best_config = _build_search_base_config(args, prev_best_config)
+    current_contract = build_run_contract(
+        panel_df,
+        feature_meta=feature_meta,
+        args=args,
+        model_config=best_config,
+        feature_config=feature_config,
+    )
+    if continue_mode:
+        validate_continue_compatibility(
+            current_contract=current_contract,
+            previous_manifest=prev_manifest,
+            previous_model_path=prev_model_path,
+            strict=bool(args.continue_strict),
+            allow_feature_contract_mismatch=bool(args.allow_feature_contract_mismatch),
+            allow_data_contract_mismatch=bool(args.allow_data_contract_mismatch),
+        )
     best_seed = args.seed
     search_summary = {
         "n_candidates": 0,
@@ -731,6 +797,7 @@ def _run_single_experiment(
     }
     train_notes: List[str] = []
     train_metrics: Dict[str, Any] = {}
+    final_contract = current_contract
 
     if continue_mode and prev_model_path and search_runs <= 0:
         final_model = load_saved_model(prev_model_path)
@@ -748,7 +815,15 @@ def _run_single_experiment(
         )
         holdout_scores_df["split"] = "holdout"
         final_eval_scores_df = holdout_scores_df
-        train_metrics = evaluate_scores_df(final_eval_scores_df, date_col="date", ticker_col="ticker")
+        train_metrics = cast(
+            Dict[str, Any],
+            evaluate_scores_df(
+            final_eval_scores_df,
+            date_col="date",
+            ticker_col="ticker",
+            config=best_config,
+            ),
+        )
         train_metrics["evaluation_split"] = "holdout"
         train_metrics["search_rank_ic_mean"] = train_metrics.get("rank_ic_mean")
         train_metrics["final_rank_ic_mean"] = train_metrics.get("rank_ic_mean")
@@ -776,6 +851,13 @@ def _run_single_experiment(
             "best_seed": best_seed,
             "best_model_type": best_config.get("model_type"),
         }
+        final_contract = build_run_contract(
+            panel_df,
+            feature_meta=feature_meta,
+            args=args,
+            model_config=best_config,
+            feature_config=feature_config,
+        )
         search_scores_df = (
             search_result.best_oof_scores.copy()
             if search_result.best_oof_scores is not None
@@ -815,7 +897,7 @@ def _run_single_experiment(
             )
             holdout_scores_df["split"] = "holdout"
             final_eval_scores_df = holdout_scores_df
-            final_metrics = evaluate_scores_df(final_eval_scores_df, date_col="date", ticker_col="ticker")
+            final_metrics = evaluate_scores_df(final_eval_scores_df, date_col="date", ticker_col="ticker", config=best_config)
             train_metrics = dict(final_metrics)
             train_metrics["evaluation_split"] = "holdout"
             train_metrics["search_rank_ic_mean"] = search_metrics.get("rank_ic_mean")
@@ -836,6 +918,7 @@ def _run_single_experiment(
             final_model,
             best_config,
             os.path.join(models_dir, f"model_{model_timestamp}"),
+            model_contract=contract_to_dict(final_contract),
         )
         logger.info("Model saved to: %s", model_path)
 
@@ -1026,6 +1109,7 @@ def _run_single_experiment(
         search_runs_completed=completed_search_runs + search_summary["n_candidates"],
         split_info=split_summary,
         search_summary=search_summary,
+        contracts=contract_to_dict(final_contract),
     )
     logger.info("Results saved to: %s", experiment_dir)
     logger.info("Done!")

@@ -8,10 +8,90 @@ import numpy as np
 import pandas as pd
 
 from allocator import allocate_orders, rebalance_orders
-from execution_engine import ExecutionEngine
+from execution_engine import ExecutionEngine, TradingConstraints, resolve_price_limit
 from portfolio_builder import PortfolioConfig, build_portfolio
 
 logger = logging.getLogger(__name__)
+
+
+def _annotate_tradeability(
+    panel_df: pd.DataFrame,
+    scores_df: pd.DataFrame,
+    *,
+    date_col: str,
+    ticker_col: str,
+    trade_date_col: str,
+) -> pd.DataFrame:
+    if scores_df.empty:
+        annotated = scores_df.copy()
+        annotated["is_tradeable"] = pd.Series(dtype=bool)
+        annotated["expected_drop_reason"] = pd.Series(dtype=object)
+        annotated["resolved_limit_up_price"] = pd.Series(dtype=float)
+        annotated["resolved_limit_down_price"] = pd.Series(dtype=float)
+        return annotated
+
+    constraints = TradingConstraints()
+    panel_sorted = panel_df.copy()
+    panel_sorted[date_col] = pd.to_datetime(panel_sorted[date_col])
+    panel_sorted = panel_sorted.sort_values([ticker_col, date_col])
+    panel_sorted["_prev_close_for_trade"] = panel_sorted.groupby(ticker_col)["close_qfq"].shift(1)
+    available_cols = [
+        date_col,
+        ticker_col,
+        "open_qfq",
+        "_prev_close_for_trade",
+        "up_limit_price",
+        "down_limit_price",
+        "board",
+        "is_st",
+        "volume",
+    ]
+    join_cols = [col for col in available_cols if col in panel_sorted.columns]
+    trade_rows = panel_sorted[join_cols].rename(columns={date_col: trade_date_col})
+    annotated = scores_df.merge(trade_rows, on=[trade_date_col, ticker_col], how="left")
+
+    expected_reasons: List[Optional[str]] = []
+    limit_ups: List[Optional[float]] = []
+    limit_downs: List[Optional[float]] = []
+    tradeable_flags: List[bool] = []
+
+    for _, row in annotated.iterrows():
+        trade_date = row.get(trade_date_col)
+        open_price = row.get("open_qfq")
+        prev_close = row.get("_prev_close_for_trade")
+        limit_up, limit_down = resolve_price_limit(
+            row,
+            prev_close,
+            constraints=constraints,
+        )
+        limit_ups.append(limit_up)
+        limit_downs.append(limit_down)
+
+        reason: Optional[str] = None
+        if pd.isna(trade_date):
+            reason = "no_trade_date"
+        elif pd.isna(open_price) or float(open_price) <= 0:
+            reason = "suspended"
+        elif pd.isna(prev_close) or float(prev_close) <= 0:
+            reason = "missing_prev_close"
+        elif limit_up is not None and float(open_price) >= float(limit_up):
+            reason = "limit_up"
+        elif ("volume" in annotated.columns) and (pd.isna(row.get("volume")) or float(row.get("volume", 0)) <= 0):
+            reason = "volume_cap"
+
+        expected_reasons.append(reason)
+        tradeable_flags.append(reason is None)
+
+    annotated["is_tradeable"] = tradeable_flags
+    annotated["expected_drop_reason"] = expected_reasons
+    annotated["resolved_limit_up_price"] = limit_ups
+    annotated["resolved_limit_down_price"] = limit_downs
+    drop_cols = [
+        col
+        for col in ["open_qfq", "_prev_close_for_trade", "up_limit_price", "down_limit_price", "board", "is_st", "volume"]
+        if col in annotated.columns
+    ]
+    return annotated.drop(columns=drop_cols)
 
 
 def _current_prices_with_carry(
@@ -66,6 +146,10 @@ def prepare_scores_for_backtest(
             prepared[signal_date_col] = prepared[date_col]
         if trade_date_col not in prepared.columns:
             prepared[trade_date_col] = pd.NaT
+        prepared["is_tradeable"] = pd.Series(dtype=bool)
+        prepared["expected_drop_reason"] = pd.Series(dtype=object)
+        prepared["resolved_limit_up_price"] = pd.Series(dtype=float)
+        prepared["resolved_limit_down_price"] = pd.Series(dtype=float)
         if return_stats:
             return prepared, prep_stats
         return prepared
@@ -79,6 +163,13 @@ def prepare_scores_for_backtest(
 
     if trade_date_col in prepared.columns:
         prepared[trade_date_col] = pd.to_datetime(prepared[trade_date_col])
+        prepared = _annotate_tradeability(
+            panel_df,
+            prepared,
+            date_col=date_col,
+            ticker_col="ticker" if "ticker" in prepared.columns else "ticker",
+            trade_date_col=trade_date_col,
+        )
         if drop_untradable_signals:
             prepared = prepared[prepared[trade_date_col].notna()].copy()
         prep_stats["prepared_signals"] = int(len(prepared))
@@ -105,6 +196,13 @@ def prepare_scores_for_backtest(
         trading_dates[pos] if pos < len(trading_dates) else pd.NaT
         for pos in next_positions
     ]
+    prepared = _annotate_tradeability(
+        panel_df,
+        prepared,
+        date_col=date_col,
+        ticker_col="ticker" if "ticker" in prepared.columns else "ticker",
+        trade_date_col=trade_date_col,
+    )
     if drop_untradable_signals:
         prepared = prepared[prepared[trade_date_col].notna()].copy()
     prep_stats["prepared_signals"] = int(len(prepared))
@@ -329,6 +427,8 @@ def backtest_from_scores(
 
         if should_rebalance:
             tradable_scores = day_scores[day_scores[ticker_col].isin(execution_prices.keys())].copy()
+            if portfolio_config.skip_untradeable_on_rebalance and "is_tradeable" in tradable_scores.columns:
+                tradable_scores = tradable_scores[tradable_scores["is_tradeable"].fillna(False)].copy()
             tradable_coverage_values.append(
                 float(len(tradable_scores) / len(day_scores)) if len(day_scores) else 0.0
             )
@@ -386,6 +486,7 @@ def backtest_from_scores(
                                     "filled_shares": fill.filled_shares,
                                     "fill_price": fill.fill_price,
                                     "commission": fill.commission,
+                                    "stamp_duty": fill.stamp_duty,
                                     "slippage_cost": fill.slippage_cost,
                                 }
                             )

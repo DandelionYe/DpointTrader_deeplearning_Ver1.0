@@ -11,6 +11,7 @@ import pandas as pd
 from panel_trainer import train_with_nested_walkforward, train_with_walkforward
 
 logger = logging.getLogger(__name__)
+LOWER_IS_BETTER_METRICS = {"logloss", "mse", "rmse", "mae"}
 
 
 @dataclass
@@ -32,11 +33,10 @@ class SearchResult:
 
 
 def score_candidate(metrics: Dict[str, float], selection_metric: str) -> float:
-    if selection_metric == "rank_ic_mean":
-        return float(metrics["rank_ic_mean"])
-    if selection_metric == "topk_return_mean":
-        return float(metrics["topk_return_mean"])
-    raise ValueError(f"Unknown selection_metric: {selection_metric}")
+    if selection_metric not in metrics:
+        raise ValueError(f"Unknown selection_metric: {selection_metric}")
+    value = float(metrics[selection_metric])
+    return -value if selection_metric in LOWER_IS_BETTER_METRICS else value
 
 
 def run_search(

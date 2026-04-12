@@ -6,7 +6,7 @@ import os
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
 
@@ -80,6 +80,79 @@ class RollingRetrainer:
             return panel_df[panel_df["date"].isin(window_dates)].copy()
         raise ValueError(f"Invalid window_type: {self.config.window_type}")
 
+    @staticmethod
+    def _label_horizon_days(args: argparse.Namespace) -> int:
+        return max(1, int(getattr(args, "label_horizon_days", 1)))
+
+    def _build_training_snapshot(
+        self,
+        panel_df: pd.DataFrame,
+        retrain_date: pd.Timestamp,
+        args: argparse.Namespace,
+        feature_config: Dict[str, Any],
+        *,
+        label_mode: str,
+    ) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+        from feature_dpoint import build_features_and_labels_panel
+
+        train_panel = self.get_training_window(panel_df, retrain_date)
+        train_result = build_features_and_labels_panel(
+            train_panel,
+            feature_config,
+            date_col="date",
+            ticker_col="ticker",
+            label_mode=label_mode,
+            include_cross_section=bool(args.include_cross_section),
+            label_horizon_days=self._label_horizon_days(args),
+            max_label_date=retrain_date,
+            return_label_end_date=True,
+        )
+        train_X, train_y, _, train_label_meta = cast(
+            Tuple[pd.DataFrame, pd.Series, Any, pd.DataFrame],
+            train_result,
+        )
+        if not train_X.empty:
+            assert pd.Timestamp(train_X["date"].max()) <= pd.Timestamp(retrain_date)
+            assert pd.Timestamp(train_label_meta["label_end_date"].max()) <= pd.Timestamp(retrain_date)
+        return train_X, train_y, train_label_meta
+
+    def _build_evaluation_snapshot(
+        self,
+        panel_df: pd.DataFrame,
+        retrain_date: pd.Timestamp,
+        eval_end_date: pd.Timestamp,
+        args: argparse.Namespace,
+        feature_config: Dict[str, Any],
+        *,
+        label_mode: str,
+    ) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+        from feature_dpoint import build_features_and_labels_panel
+
+        eval_source_panel = panel_df[panel_df["date"] <= eval_end_date].copy()
+        eval_result = build_features_and_labels_panel(
+            eval_source_panel,
+            feature_config,
+            date_col="date",
+            ticker_col="ticker",
+            label_mode=label_mode,
+            include_cross_section=bool(args.include_cross_section),
+            label_horizon_days=self._label_horizon_days(args),
+            max_label_date=eval_end_date,
+            return_label_end_date=True,
+        )
+        eval_X_full, eval_y_full, _, eval_label_meta_full = cast(
+            Tuple[pd.DataFrame, pd.Series, Any, pd.DataFrame],
+            eval_result,
+        )
+        eval_mask = (eval_X_full["date"] > retrain_date) & (eval_X_full["date"] <= eval_end_date)
+        eval_X = eval_X_full.loc[eval_mask].copy()
+        eval_y = eval_y_full.loc[eval_X.index].copy()
+        eval_label_meta = eval_label_meta_full.loc[eval_X.index].copy()
+        if not eval_X.empty:
+            assert pd.Timestamp(eval_X["date"].min()) > pd.Timestamp(retrain_date)
+            assert pd.Timestamp(eval_label_meta["label_end_date"].max()) <= pd.Timestamp(eval_end_date)
+        return eval_X, eval_y, eval_label_meta
+
     def run(self, panel_df: pd.DataFrame, args: argparse.Namespace) -> List[SnapshotManifest]:
         from main_basket import build_feature_config, build_model_config, build_split_plan, resolve_label_mode_alias
 
@@ -102,25 +175,24 @@ class RollingRetrainer:
                 continue
 
             feature_config = build_feature_config(args)
-            from feature_dpoint import build_features_and_labels_panel
-
-            X, y, _ = build_features_and_labels_panel(
-                panel_df[panel_df["date"] <= eval_end_date].copy(),
+            resolved_label_mode = resolve_label_mode_alias(args.label_mode)
+            train_X, train_y, train_label_meta = self._build_training_snapshot(
+                panel_df,
+                retrain_date,
+                args,
                 feature_config,
-                date_col="date",
-                ticker_col="ticker",
-                label_mode=resolve_label_mode_alias(args.label_mode),
-                include_cross_section=bool(args.include_cross_section),
+                label_mode=resolved_label_mode,
             )
-            if X.empty:
-                continue
-
-            train_X = X[X["date"] <= retrain_date].copy()
-            train_y = y.loc[train_X.index].copy()
-            eval_X = X[(X["date"] > retrain_date) & (X["date"] <= eval_end_date)].copy()
+            eval_X, eval_y, eval_label_meta = self._build_evaluation_snapshot(
+                panel_df,
+                retrain_date,
+                eval_end_date,
+                args,
+                feature_config,
+                label_mode=resolved_label_mode,
+            )
             if train_X.empty or eval_X.empty:
                 continue
-            eval_y = y.loc[eval_X.index].copy()
 
             search_args = deepcopy(args)
             search_args.use_holdout = 0
@@ -202,7 +274,12 @@ class RollingRetrainer:
             equity_curve = backtest_result.equity_curve.copy()
             equity_curve.to_csv(equity_path, index=False)
 
-            metrics = evaluate_scores_df(scores_df, date_col="date", ticker_col="ticker")
+            metrics: Dict[str, Any] = evaluate_scores_df(
+                scores_df,
+                date_col="date",
+                ticker_col="ticker",
+                config=search_result.best_config,
+            )
             metrics["search_rank_ic_mean"] = float(search_result.best_metrics.get("rank_ic_mean", 0.0))
             metrics["final_rank_ic_mean"] = float(metrics.get("rank_ic_mean", 0.0))
             metrics["evaluation_split"] = "forward_eval"
@@ -212,6 +289,10 @@ class RollingRetrainer:
             metrics["prepared_signals"] = int(prep_stats.get("prepared_signals", 0))
             metrics["dropped_signals"] = int(prep_stats.get("dropped_signals", 0))
             metrics["execution_lag_days"] = int(prep_stats.get("execution_lag_days", getattr(args, "execution_lag_days", 1)))
+            metrics["train_sample_date_max"] = str(train_X["date"].max())
+            metrics["train_label_end_date_max"] = str(train_label_meta["label_end_date"].max())
+            metrics["eval_sample_date_min"] = str(eval_X["date"].min())
+            metrics["eval_label_end_date_max"] = str(eval_label_meta["label_end_date"].max())
             create_manifest(
                 snapshot_dir,
                 run_id=snapshot_idx + 1,

@@ -9,6 +9,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def local_tmpdir():

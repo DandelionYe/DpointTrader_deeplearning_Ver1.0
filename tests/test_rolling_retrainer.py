@@ -36,6 +36,7 @@ def sample_panel():
 def mock_args():
     return argparse.Namespace(
         label_mode="classification",
+        label_horizon_days=1,
         include_cross_section=1,
         model_type="xgb",
         device="cpu",
@@ -134,3 +135,5 @@ class TestRollingRetrainer:
             train_end = pd.Timestamp(snapshot.train_end_date)
             eval_start = pd.Timestamp(snapshot.metrics["evaluation_start_date"])
             assert train_end < eval_start
+            assert pd.Timestamp(snapshot.metrics["train_label_end_date_max"]) <= train_end
+            assert pd.Timestamp(snapshot.metrics["eval_label_end_date_max"]) >= eval_start

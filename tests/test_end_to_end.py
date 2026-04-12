@@ -11,6 +11,8 @@ import pytest
 
 from main_basket import main
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def local_tmpdir():

@@ -37,9 +37,11 @@ def test_predict_panel_with_predict_proba_returns_probability_columns():
     X = _sample_X()
     out = predict_panel(DummyProbModel(), X, return_proba=True)
 
-    assert list(out.columns) == ["date", "ticker", "score", "proba", "probability_available"]
+    assert list(out.columns) == ["date", "ticker", "score", "prediction", "raw_output", "proba_up", "proba", "probability_available"]
     assert out["probability_available"].eq(True).all()
     assert np.allclose(out["score"].to_numpy(), out["proba"].to_numpy(), equal_nan=False)
+    assert np.allclose(out["proba_up"].to_numpy(), out["proba"].to_numpy(), equal_nan=False)
+    assert set(out["prediction"].unique()).issubset({0.0, 1.0})
     assert out["proba"].notna().all()
 
 
@@ -47,9 +49,10 @@ def test_predict_panel_without_predict_proba_returns_nan_proba():
     X = _sample_X()
     out = predict_panel(DummyDecisionModel(), X, return_proba=True)
 
-    assert list(out.columns) == ["date", "ticker", "score", "proba", "probability_available"]
+    assert list(out.columns) == ["date", "ticker", "score", "prediction", "raw_output", "proba_up", "proba", "probability_available"]
     assert out["probability_available"].eq(False).all()
     assert out["proba"].isna().all()
+    assert out["proba_up"].isna().all()
     assert out["score"].notna().all()
 
 

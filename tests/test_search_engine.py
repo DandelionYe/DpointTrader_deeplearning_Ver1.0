@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from search_engine import SearchResult, run_search
+from search_engine import SearchResult, run_search, score_candidate
 from search_space import sample_model_config
 from splitters import walkforward_splits_by_date
 
@@ -61,6 +61,12 @@ def mock_args():
 
 
 class TestSearchEngine:
+    def test_score_candidate_supports_minimization_metrics(self):
+        metrics = {"rmse": 0.12, "mae": 0.08, "macro_f1": 0.66}
+        assert score_candidate(metrics, "rmse") == pytest.approx(-0.12)
+        assert score_candidate(metrics, "mae") == pytest.approx(-0.08)
+        assert score_candidate(metrics, "macro_f1") == pytest.approx(0.66)
+
     def test_run_search_returns_search_result(self, sample_data, mock_args):
         X, y, indexed_splits = sample_data
         base_config = {

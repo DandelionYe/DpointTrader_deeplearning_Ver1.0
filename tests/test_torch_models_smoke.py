@@ -380,7 +380,7 @@ class TestTorchModelsSmoke:
         assert pred["probability_available"].eq(False).all()
         assert pred["proba"].isna().all()
 
-    def test_predict_panel_marks_proba_unavailable_for_torch_tabular_model(self, tiny_tabular_data):
+    def test_predict_panel_exposes_probabilities_for_torch_binary_tabular_model(self, tiny_tabular_data):
         from panel_trainer import predict_panel, train_panel_model
 
         X, y = tiny_tabular_data
@@ -404,5 +404,5 @@ class TestTorchModelsSmoke:
         model, _ = train_panel_model(panel_X, y, config, date_col="date", ticker_col="ticker", seed=42)
         pred = predict_panel(model, panel_X, date_col="date", ticker_col="ticker")
 
-        assert pred["probability_available"].eq(False).all()
-        assert pred["proba"].isna().all()
+        assert pred["probability_available"].eq(True).all()
+        assert pred["proba"].between(0.0, 1.0).all()

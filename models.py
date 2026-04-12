@@ -12,11 +12,16 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from sequence_builder import PanelSequenceStore
+from tasks import get_output_dim as task_output_dim
+from tasks import multiclass_class_values
+from tasks import multiclass_probabilities_to_score
+from tasks import resolve_loss_spec
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +63,13 @@ __all__ = [
     "create_sequence_dataset",
     "make_sequence_dataloader",
     "predict_pytorch_model_tabular",
+    "predict_pytorch_model_tabular_outputs",
     "predict_pytorch_model_sequence",
+    "predict_pytorch_model_sequence_outputs",
     "make_model",
     "predict_dpoint",
+    "get_loss_fn",
+    "get_output_dim",
     "resolve_torch_device",
     "get_torch_runtime_info",
     "is_torch_model_type",
@@ -162,11 +171,27 @@ def _to_numpy_labels(y: Any) -> Optional[np.ndarray]:
     return np.asarray(y, dtype=np.float32)
 
 
+def get_output_dim(task_type: str, n_classes: Optional[int] = None) -> int:
+    return task_output_dim(task_type, n_classes)
+
+
+def get_loss_fn(task_type: str, config: Dict[str, Any]) -> Any:
+    _require_torch("get_loss_fn")
+    if task_type == "binary_classification":
+        return nn.BCEWithLogitsLoss()
+    if task_type == "multiclass_classification":
+        return nn.CrossEntropyLoss()
+    if task_type == "regression":
+        return nn.HuberLoss()
+    raise ValueError(f"Unsupported task_type: {task_type}")
+
+
 def create_sequence_dataset(
     X: pd.DataFrame,
     y: Optional[pd.Series] = None,
     seq_len: int = 20,
     batch_size: int = 64,
+    task_type: str = "binary_classification",
     device: Optional[torch.device] = None,
     shuffle: bool = True,
     pin_memory: bool = False,
@@ -188,7 +213,11 @@ def create_sequence_dataset(
     X_tensor = torch.tensor(X.to_numpy(dtype=np.float32, copy=False), dtype=torch.float32)
     y_tensor = None
     if y is not None:
-        y_tensor = torch.tensor(y.to_numpy(dtype=np.float32, copy=False), dtype=torch.float32).unsqueeze(1)
+        y_values = y.to_numpy(copy=False)
+        if task_type == "multiclass_classification":
+            y_tensor = torch.tensor(np.asarray(y_values, dtype=np.int64), dtype=torch.long)
+        else:
+            y_tensor = torch.tensor(np.asarray(y_values, dtype=np.float32), dtype=torch.float32).unsqueeze(1)
 
     if seq_len > 1:
         X_seq, y_seq = _make_sequences(X_tensor, y_tensor, seq_len)
@@ -214,6 +243,7 @@ def make_sequence_dataloader(
     *,
     batch_size: int,
     shuffle: bool,
+    task_type: str = "binary_classification",
     pin_memory: bool = False,
     num_workers: int = 0,
     persistent_workers: bool = False,
@@ -225,9 +255,12 @@ def make_sequence_dataloader(
     if y_seq is None:
         dataset = TensorDataset(X_tensor)
     else:
-        y_tensor = torch.tensor(np.asarray(y_seq, dtype=np.float32), dtype=torch.float32)
-        if y_tensor.dim() == 1:
-            y_tensor = y_tensor.unsqueeze(1)
+        if task_type == "multiclass_classification":
+            y_tensor = torch.tensor(np.asarray(y_seq, dtype=np.int64).reshape(-1), dtype=torch.long)
+        else:
+            y_tensor = torch.tensor(np.asarray(y_seq, dtype=np.float32), dtype=torch.float32)
+            if y_tensor.dim() == 1:
+                y_tensor = y_tensor.unsqueeze(1)
         dataset = TensorDataset(X_tensor, y_tensor)
     kwargs: Dict[str, Any] = {
         "batch_size": batch_size,
@@ -243,8 +276,9 @@ def make_sequence_dataloader(
 
 if TORCH_AVAILABLE:
     class PanelSequenceDataset(Dataset):
-        def __init__(self, store: PanelSequenceStore) -> None:
+        def __init__(self, store: PanelSequenceStore, task_type: str = "binary_classification") -> None:
             self.store = store
+            self.task_type = str(task_type)
 
         def __len__(self) -> int:
             return len(self.store.window_keys)
@@ -257,12 +291,16 @@ if TORCH_AVAILABLE:
             if self.store.label_by_ticker is None:
                 return X_tensor
             y_value = float(self.store.label_by_ticker[ticker][start + seq_len - 1])
-            y_tensor = torch.tensor([y_value], dtype=torch.float32)
+            if self.task_type == "multiclass_classification":
+                y_tensor = torch.tensor(int(y_value), dtype=torch.long)
+            else:
+                y_tensor = torch.tensor([y_value], dtype=torch.float32)
             return X_tensor, y_tensor
 else:  # pragma: no cover
     class PanelSequenceDataset:  # type: ignore[no-redef]
-        def __init__(self, store: PanelSequenceStore) -> None:
+        def __init__(self, store: PanelSequenceStore, task_type: str = "binary_classification") -> None:
             self.store = store
+            self.task_type = str(task_type)
 
 
 def make_panel_sequence_dataloader(
@@ -270,13 +308,14 @@ def make_panel_sequence_dataloader(
     *,
     batch_size: int,
     shuffle: bool,
+    task_type: str = "binary_classification",
     pin_memory: bool = False,
     num_workers: int = 0,
     persistent_workers: bool = False,
     prefetch_factor: Optional[int] = None,
 ) -> DataLoader:
     _require_torch("make_panel_sequence_dataloader")
-    dataset = PanelSequenceDataset(store)
+    dataset = PanelSequenceDataset(store, task_type=task_type)
     kwargs: Dict[str, Any] = {
         "batch_size": batch_size,
         "shuffle": shuffle,
@@ -305,6 +344,60 @@ def _make_sequences(
 
 def _logits_to_probs(logits: torch.Tensor) -> torch.Tensor:
     return torch.sigmoid(logits)
+
+
+def _model_outputs_to_scores(logits: torch.Tensor, task_type: str) -> torch.Tensor:
+    if task_type == "binary_classification":
+        return torch.sigmoid(logits)
+    if task_type == "multiclass_classification":
+        probs = torch.softmax(logits, dim=-1)
+        class_values = torch.as_tensor(
+            multiclass_class_values(int(probs.shape[-1])),
+            dtype=probs.dtype,
+            device=probs.device,
+        )
+        return (probs * class_values).sum(dim=-1, keepdim=True)
+    return logits
+
+
+def _model_outputs_to_prediction_components(logits: torch.Tensor, task_type: str) -> Dict[str, torch.Tensor]:
+    if task_type == "binary_classification":
+        proba = torch.sigmoid(logits).reshape(-1).to(torch.float32)
+        prediction = (proba >= 0.5).to(torch.float32)
+        return {
+            "score": proba,
+            "prediction": prediction,
+            "raw_output": proba,
+            "proba_up": proba,
+            "proba": proba,
+        }
+    if task_type == "multiclass_classification":
+        probs = torch.softmax(logits, dim=-1).to(torch.float32)
+        class_values = torch.as_tensor(
+            multiclass_class_values(int(probs.shape[-1])),
+            dtype=probs.dtype,
+            device=probs.device,
+        )
+        score = (probs * class_values).sum(dim=-1)
+        prediction = probs.argmax(dim=-1).to(torch.int64)
+        bullish_proba = probs[:, -1]
+        confidence = probs.max(dim=-1).values
+        return {
+            "score": score,
+            "prediction": prediction,
+            "raw_output": confidence,
+            "proba_up": bullish_proba,
+            "proba": bullish_proba,
+        }
+    prediction = logits.reshape(-1).to(torch.float32)
+    nan_tensor = torch.full_like(prediction, float("nan"))
+    return {
+        "score": prediction,
+        "prediction": prediction,
+        "raw_output": prediction,
+        "proba_up": nan_tensor,
+        "proba": nan_tensor,
+    }
 
 
 def _is_cuda_oom_error(exc: Exception) -> bool:
@@ -371,6 +464,7 @@ def _make_sequence_loader_for_data(
     seq_len: int,
     batch_size: int,
     shuffle: bool,
+    task_type: str = "binary_classification",
     loader_settings: Dict[str, Any],
 ) -> DataLoader:
     if isinstance(X, PanelSequenceStore):
@@ -378,6 +472,7 @@ def _make_sequence_loader_for_data(
             X,
             batch_size=batch_size,
             shuffle=shuffle,
+            task_type=task_type,
             **loader_settings,
         )
     if isinstance(X, np.ndarray) and X.ndim == 3:
@@ -386,6 +481,7 @@ def _make_sequence_loader_for_data(
             _to_numpy_labels(y),
             batch_size=batch_size,
             shuffle=shuffle,
+            task_type=task_type,
             **loader_settings,
         )
     return create_sequence_dataset(
@@ -393,6 +489,7 @@ def _make_sequence_loader_for_data(
         y,
         seq_len=seq_len,
         batch_size=batch_size,
+        task_type=task_type,
         device=None,
         shuffle=shuffle,
         **loader_settings,
@@ -557,6 +654,7 @@ def _probe_sequence_batch_memory(
             seq_len=seq_len,
             batch_size=batch_size,
             shuffle=False,
+            task_type=str(getattr(model, "_task_type", "binary_classification")),
             loader_settings=loader_settings,
         )
         if for_inference:
@@ -970,6 +1068,8 @@ def _make_sequence_model(model_type: str, input_dim: int, config: Dict[str, Any]
     d_model = int(config.get("d_model", 64))
     nhead = int(config.get("nhead", 4))
     dim_feedforward = int(config.get("dim_feedforward", 128))
+    task_type = str(config.get("task_type", "binary_classification"))
+    output_dim = int(config.get("output_dim", get_output_dim(task_type, config.get("n_classes"))))
 
     if model_type == "lstm":
         return LSTM(
@@ -978,6 +1078,7 @@ def _make_sequence_model(model_type: str, input_dim: int, config: Dict[str, Any]
             num_layers=num_layers,
             dropout_rate=dropout_rate,
             bidirectional=bidirectional,
+            output_dim=output_dim,
         )
     if model_type == "gru":
         return GRU(
@@ -986,6 +1087,7 @@ def _make_sequence_model(model_type: str, input_dim: int, config: Dict[str, Any]
             num_layers=num_layers,
             dropout_rate=dropout_rate,
             bidirectional=bidirectional,
+            output_dim=output_dim,
         )
     if model_type == "cnn":
         return CNN1D(
@@ -994,6 +1096,7 @@ def _make_sequence_model(model_type: str, input_dim: int, config: Dict[str, Any]
             num_filters=num_filters,
             kernel_sizes=kernel_sizes,
             dropout_rate=dropout_rate,
+            output_dim=output_dim,
         )
     if model_type == "transformer":
         return Transformer(
@@ -1003,6 +1106,7 @@ def _make_sequence_model(model_type: str, input_dim: int, config: Dict[str, Any]
             num_layers=num_layers,
             dim_feedforward=dim_feedforward,
             dropout_rate=dropout_rate,
+            output_dim=output_dim,
         )
     raise ValueError(f"Unknown model_type: {model_type}")
 
@@ -1018,6 +1122,8 @@ def train_pytorch_model(
     _require_torch("train_pytorch_model")
 
     model_type = str(config.get("model_type", "mlp")).lower()
+    task_type = str(config.get("task_type", "binary_classification"))
+    n_classes = config.get("n_classes")
     learning_rate = float(config.get("learning_rate", 0.001))
     weight_decay = float(config.get("weight_decay", 1e-5))
     epochs = int(config.get("epochs", 20))
@@ -1026,6 +1132,7 @@ def train_pytorch_model(
     use_amp = bool(config.get("use_amp", False)) and device.type == "cuda"
     use_tf32 = bool(config.get("use_tf32", False))
     loader_settings = _build_sequence_loader_runtime_settings(device, config)
+    loss_spec = resolve_loss_spec(task_type, {"n_classes": n_classes})
 
     def _train_once(current_batch_size: int) -> nn.Module:
         is_prebuilt_sequence = isinstance(X_train, np.ndarray) and X_train.ndim == 3
@@ -1041,14 +1148,23 @@ def train_pytorch_model(
                 hidden_dim=hidden_dim,
                 dropout_rate=dropout_rate,
                 hidden_dims=hidden_dims,
+                output_dim=loss_spec.output_dim,
             )
             X_train_tensor = torch.as_tensor(_to_numpy_features(X_train), dtype=torch.float32, device=device)
-            y_train_tensor = torch.as_tensor(_to_numpy_labels(y_train).reshape(-1, 1), dtype=torch.float32, device=device)
+            y_train_np = _to_numpy_labels(y_train)
+            if task_type == "multiclass_classification":
+                y_train_tensor = torch.as_tensor(y_train_np.reshape(-1), dtype=torch.long, device=device)
+            else:
+                y_train_tensor = torch.as_tensor(y_train_np.reshape(-1, 1), dtype=torch.float32, device=device)
             X_val_tensor = None
             y_val_tensor = None
             if X_val is not None and y_val is not None:
                 X_val_tensor = torch.as_tensor(_to_numpy_features(X_val), dtype=torch.float32, device=device)
-                y_val_tensor = torch.as_tensor(_to_numpy_labels(y_val).reshape(-1, 1), dtype=torch.float32, device=device)
+                y_val_np = _to_numpy_labels(y_val)
+                if task_type == "multiclass_classification":
+                    y_val_tensor = torch.as_tensor(y_val_np.reshape(-1), dtype=torch.long, device=device)
+                else:
+                    y_val_tensor = torch.as_tensor(y_val_np.reshape(-1, 1), dtype=torch.float32, device=device)
             train_loader = None
             val_loader = None
             input_dim = int(X_train.shape[1])
@@ -1064,6 +1180,7 @@ def train_pytorch_model(
                 seq_len=seq_len,
                 batch_size=current_batch_size,
                 shuffle=True,
+                task_type=task_type,
                 loader_settings=loader_settings,
             )
             val_loader = None
@@ -1074,6 +1191,7 @@ def train_pytorch_model(
                     seq_len=seq_len,
                     batch_size=current_batch_size,
                     shuffle=False,
+                    task_type=task_type,
                     loader_settings=loader_settings,
                 )
             X_train_tensor = None
@@ -1083,7 +1201,7 @@ def train_pytorch_model(
 
         model = model.to(device)
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        criterion = nn.BCEWithLogitsLoss()
+        criterion = get_loss_fn(task_type, {"n_classes": n_classes})
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
         scaler = GradScaler(enabled=use_amp)
         best_monitor_loss = float("inf")
@@ -1109,6 +1227,8 @@ def train_pytorch_model(
                         optimizer.zero_grad(set_to_none=True)
                         with autocast(device_type=device.type, enabled=use_amp):
                             logits = model(X_batch)
+                            if task_type == "multiclass_classification":
+                                y_batch = y_batch.reshape(-1)
                             loss = criterion(logits, y_batch)
                         scaler.scale(loss).backward()
                         scaler.unscale_(optimizer)
@@ -1129,6 +1249,8 @@ def train_pytorch_model(
                                 y_batch = y_val_tensor[start : start + effective_batch_size]
                                 with autocast(device_type=device.type, enabled=use_amp):
                                     logits = model(X_batch)
+                                    if task_type == "multiclass_classification":
+                                        y_batch = y_batch.reshape(-1)
                                     loss = criterion(logits, y_batch)
                                 val_total_loss += float(loss.item())
                                 val_batches += 1
@@ -1199,6 +1321,7 @@ def train_pytorch_model(
         model._use_amp = bool(config.get("use_amp", False))
         model._use_tf32 = bool(config.get("use_tf32", False))
         model._predict_batch_size = int(config.get("predict_batch_size", 0)) if int(config.get("predict_batch_size", 0)) > 0 else int(current_batch_size)
+        model._task_type = task_type
         return model
 
     if model_type == "mlp" or device.type != "cuda":
@@ -1297,22 +1420,42 @@ def predict_pytorch_model_tabular(
     X: pd.DataFrame,
     device: torch.device,
 ) -> pd.Series:
+    outputs = predict_pytorch_model_tabular_outputs(model, X, device)
+    return pd.Series(outputs["score"], index=X.index, name="dpoint")
+
+
+def predict_pytorch_model_tabular_outputs(
+    model: nn.Module,
+    X: pd.DataFrame,
+    device: torch.device,
+) -> Dict[str, np.ndarray]:
     _require_torch("predict_pytorch_model_tabular")
     model.eval()
     X_tensor = torch.tensor(X.to_numpy(dtype=np.float32, copy=False), dtype=torch.float32)
     batch_size = max(1, int(getattr(model, "_predict_batch_size", 16384 if device.type == "cuda" else 1024)))
     use_amp = bool(getattr(model, "_use_amp", False)) and device.type == "cuda"
     use_tf32 = bool(getattr(model, "_use_tf32", False))
-    all_probs = []
+    task_type = str(getattr(model, "_task_type", "binary_classification"))
+    all_outputs: Dict[str, list[torch.Tensor]] = {
+        "score": [],
+        "prediction": [],
+        "raw_output": [],
+        "proba_up": [],
+        "proba": [],
+    }
     with _torch_precision_context(device, use_tf32):
         with torch.no_grad():
             for start in range(0, X_tensor.shape[0], batch_size):
                 batch = X_tensor[start : start + batch_size].to(device)
                 with autocast(device_type=device.type, enabled=use_amp):
                     logits = model(batch)
-                all_probs.append(_logits_to_probs(logits).detach().to(torch.float32).cpu())
-    probs = torch.cat(all_probs, dim=0).to(torch.float32).numpy().flatten()
-    return pd.Series(probs, index=X.index, name="dpoint")
+                batch_outputs = _model_outputs_to_prediction_components(logits, task_type)
+                for key, value in batch_outputs.items():
+                    all_outputs[key].append(value.detach().cpu())
+    return {
+        key: torch.cat(values, dim=0).numpy() if values else np.array([], dtype=np.float32)
+        for key, values in all_outputs.items()
+    }
 
 
 def predict_pytorch_model_sequence(
@@ -1321,6 +1464,16 @@ def predict_pytorch_model_sequence(
     meta_df: pd.DataFrame,
     device: torch.device,
 ) -> pd.Series:
+    outputs = predict_pytorch_model_sequence_outputs(model, X_seq, meta_df, device)
+    return pd.Series(outputs["score"], index=meta_df.index, name="dpoint")
+
+
+def predict_pytorch_model_sequence_outputs(
+    model: nn.Module,
+    X_seq: Any,
+    meta_df: pd.DataFrame,
+    device: torch.device,
+) -> Dict[str, np.ndarray]:
     _require_torch("predict_pytorch_model_sequence")
     model.eval()
     batch_size = _ensure_sequence_predict_batch_size(model, X_seq, device)
@@ -1337,8 +1490,15 @@ def predict_pytorch_model_sequence(
             shuffle=False,
             **loader_settings,
         )
-    all_probs = []
+    all_outputs: Dict[str, list[torch.Tensor]] = {
+        "score": [],
+        "prediction": [],
+        "raw_output": [],
+        "proba_up": [],
+        "proba": [],
+    }
     non_blocking = bool(loader_settings.get("pin_memory", False)) and device.type == "cuda"
+    task_type = str(getattr(model, "_task_type", "binary_classification"))
     with _torch_precision_context(device, use_tf32):
         with torch.no_grad():
             for batch in loader:
@@ -1346,9 +1506,13 @@ def predict_pytorch_model_sequence(
                 X_batch = X_batch.to(device, non_blocking=non_blocking)
                 with autocast(device_type=device.type, enabled=use_amp):
                     logits = model(X_batch)
-                all_probs.append(_logits_to_probs(logits).detach().to(torch.float32).cpu())
-    probs = torch.cat(all_probs, dim=0).to(torch.float32).numpy().flatten()
-    return pd.Series(probs, index=meta_df.index, name="dpoint")
+                batch_outputs = _model_outputs_to_prediction_components(logits, task_type)
+                for key, value in batch_outputs.items():
+                    all_outputs[key].append(value.detach().cpu())
+    return {
+        key: torch.cat(values, dim=0).numpy() if values else np.array([], dtype=np.float32)
+        for key, values in all_outputs.items()
+    }
 
 
 def predict_pytorch_model(
@@ -1402,6 +1566,7 @@ def _try_import_xgboost() -> Any:
 def make_model(candidate: Dict[str, Any], seed: int) -> Any:
     model_config = candidate["model_config"]
     model_type = str(model_config["model_type"]).lower()
+    task_type = str(model_config.get("task_type", "binary_classification"))
     params = dict(model_config.get("params", {}))
 
     if model_type == "logreg":
@@ -1445,10 +1610,23 @@ def make_model(candidate: Dict[str, Any], seed: int) -> Any:
             xgb_params = dict(params)
             xgb_params.setdefault("random_state", seed)
             xgb_params.setdefault("tree_method", "hist")
+            if task_type == "regression":
+                xgb_params.setdefault("objective", "reg:squarederror")
+                xgb_params.setdefault("eval_metric", "rmse")
+                xgb_params.setdefault("verbosity", 0)
+                return xgb.XGBRegressor(**xgb_params)
+            if task_type == "multiclass_classification":
+                n_classes = int(model_config.get("n_classes", params.get("num_class", 3)) or 3)
+                xgb_params.setdefault("objective", "multi:softprob")
+                xgb_params.setdefault("num_class", n_classes)
+                xgb_params.setdefault("eval_metric", "mlogloss")
+                xgb_params.setdefault("verbosity", 0)
+                return xgb.XGBClassifier(**xgb_params)
+            xgb_params.setdefault("objective", "binary:logistic")
             xgb_params.setdefault("eval_metric", "logloss")
             xgb_params.setdefault("verbosity", 0)
             return xgb.XGBClassifier(**xgb_params)
-        fallback = GradientBoostingClassifier(random_state=seed)
+        fallback = GradientBoostingRegressor(random_state=seed) if task_type == "regression" else GradientBoostingClassifier(random_state=seed)
         return fallback
 
     raise ValueError(f"Unsupported model_type for make_model: {model_type}")
@@ -1456,6 +1634,7 @@ def make_model(candidate: Dict[str, Any], seed: int) -> Any:
 
 def predict_dpoint(model: Any, X: pd.DataFrame) -> pd.Series:
     X_values = X.to_numpy(dtype=np.float32, copy=False) if isinstance(X, pd.DataFrame) else np.asarray(X, dtype=np.float32)
+    task_type = str(getattr(model, "_task_type", "binary_classification"))
     if is_torch_model_instance(model):
         device = resolve_torch_device(str(getattr(model, "_device_preference", "auto")))
         if getattr(model, "_is_panel_sequence_model", False):
@@ -1464,8 +1643,10 @@ def predict_dpoint(model: Any, X: pd.DataFrame) -> pd.Series:
             return predict_pytorch_model(model, pd.DataFrame(X_values), device, seq_len=int(getattr(model, "_seq_len", 20)))
         return predict_pytorch_model_tabular(model, pd.DataFrame(X_values), device)
     if hasattr(model, "predict_proba"):
-        proba = model.predict_proba(X_values)[:, 1]
-        return pd.Series(proba, index=getattr(X, "index", None), name="dpoint")
+        proba = model.predict_proba(X_values)
+        if task_type == "multiclass_classification":
+            return pd.Series(multiclass_probabilities_to_score(proba), index=getattr(X, "index", None), name="dpoint")
+        return pd.Series(proba[:, 1], index=getattr(X, "index", None), name="dpoint")
     pred = model.predict(X_values)
     return pd.Series(pred, index=getattr(X, "index", None), name="dpoint")
 
@@ -1485,22 +1666,33 @@ def _torch_feature_meta(model: Any) -> Dict[str, Any]:
         "predict_target_vram_util": float(getattr(model, "_predict_target_vram_util", getattr(model, "_target_vram_util", 0.88))),
         "use_amp": bool(getattr(model, "_use_amp", False)),
         "use_tf32": bool(getattr(model, "_use_tf32", False)),
+        "task_type": str(getattr(model, "_task_type", "binary_classification")),
+        "n_classes": getattr(model, "_n_classes", None),
         "has_preprocessor": getattr(model, "_preprocessor", None) is not None,
     }
 
 
-def save_trained_model(model: Any, model_config: Dict[str, Any], destination: str) -> str:
+def save_trained_model(
+    model: Any,
+    model_config: Dict[str, Any],
+    destination: str,
+    model_contract: Optional[Dict[str, Any]] = None,
+) -> str:
     if is_torch_model_instance(model):
         os.makedirs(destination, exist_ok=True)
         state_path = os.path.join(destination, "model_state.pt")
         config_path = os.path.join(destination, "model_config.json")
         feature_meta_path = os.path.join(destination, "feature_meta.json")
+        contract_path = os.path.join(destination, "model_contract.json")
         normalizer_path = os.path.join(destination, "normalizer.pkl")
         torch.save(model.state_dict(), state_path)
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(model_config, f, ensure_ascii=False, indent=2)
         with open(feature_meta_path, "w", encoding="utf-8") as f:
             json.dump(_torch_feature_meta(model), f, ensure_ascii=False, indent=2)
+        if model_contract is not None:
+            with open(contract_path, "w", encoding="utf-8") as f:
+                json.dump(model_contract, f, ensure_ascii=False, indent=2)
         if getattr(model, "_preprocessor", None) is not None:
             joblib.dump(model._preprocessor, normalizer_path)
         return destination
@@ -1510,6 +1702,10 @@ def save_trained_model(model: Any, model_config: Dict[str, Any], destination: st
     else:
         model_path = f"{destination}.joblib"
     joblib.dump(model, model_path)
+    if model_contract is not None:
+        root, _ = os.path.splitext(model_path)
+        with open(f"{root}.contract.json", "w", encoding="utf-8") as f:
+            json.dump(model_contract, f, ensure_ascii=False, indent=2)
     return model_path
 
 
@@ -1517,6 +1713,8 @@ def _build_saved_torch_model(model_config: Dict[str, Any], feature_meta: Dict[st
     _require_torch("load_saved_model")
     model_type = str(model_config.get("model_type", "mlp")).lower()
     model_params = dict(model_config.get("model_params", {}))
+    task_type = str(feature_meta.get("task_type", model_config.get("task_type", "binary_classification")))
+    n_classes = feature_meta.get("n_classes", model_config.get("n_classes"))
     feature_names = list(feature_meta.get("feature_names", []))
     input_dim = len(feature_names)
     if input_dim <= 0:
@@ -1530,9 +1728,11 @@ def _build_saved_torch_model(model_config: Dict[str, Any], feature_meta: Dict[st
             hidden_dim=hidden_dim,
             dropout_rate=float(model_params.get("dropout_rate", 0.3)),
             hidden_dims=hidden_dims,
+            output_dim=get_output_dim(task_type, n_classes),
         )
     else:
-        model = _make_sequence_model(model_type, input_dim, model_params)
+        runtime_config = {"task_type": task_type, "n_classes": n_classes, **model_params}
+        model = _make_sequence_model(model_type, input_dim, runtime_config)
 
     state_path = feature_meta["_state_path"]
     state_dict = torch.load(state_path, map_location="cpu")
@@ -1551,6 +1751,8 @@ def _build_saved_torch_model(model_config: Dict[str, Any], feature_meta: Dict[st
     model._predict_target_vram_util = float(feature_meta.get("predict_target_vram_util", model._target_vram_util))
     model._use_amp = bool(feature_meta.get("use_amp", False))
     model._use_tf32 = bool(feature_meta.get("use_tf32", False))
+    model._task_type = task_type
+    model._n_classes = n_classes
     normalizer_path = feature_meta.get("_normalizer_path")
     if normalizer_path and os.path.exists(normalizer_path):
         model._preprocessor = joblib.load(normalizer_path)

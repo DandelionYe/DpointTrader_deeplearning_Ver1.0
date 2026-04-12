@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from constants import DEFAULT_LABEL_MODE
+from tasks import LabelSpec
 
 logger = logging.getLogger(__name__)
 
@@ -86,19 +87,13 @@ def build_binary_label(
     """
     df = panel_df.copy()
 
-    # 按 ticker 分组计算
-    def calc_label(group):
-        close = group[close_col]
-        future_close = close.shift(-shift)
-        # close_{t+1} > close_t 等价于 return > 0
-        label = pd.Series(np.nan, index=group.index, dtype=float)
-        valid_mask = future_close.notna()
-        label.loc[valid_mask] = (
-            future_close.loc[valid_mask] > close.loc[valid_mask]
-        ).astype(float)
-        return label
-
-    df["label"] = df.groupby(ticker_col, group_keys=False).apply(calc_label)
+    close = df[close_col]
+    future_close = df.groupby(ticker_col)[close_col].shift(-shift)
+    df["label"] = pd.Series(np.nan, index=df.index, dtype=float)
+    valid_mask = future_close.notna()
+    df.loc[valid_mask, "label"] = (
+        future_close.loc[valid_mask] > close.loc[valid_mask]
+    ).astype(float)
 
     # 去除末尾 NaN
     df = df.dropna(subset=["label"])
@@ -157,14 +152,9 @@ def build_multiclass_label(
     """
     df = panel_df.copy()
 
-    # 计算收益率
-    def calc_return(group):
-        close = group[close_col]
-        future_close = close.shift(-shift)
-        ret = (future_close - close) / close
-        return ret
-
-    df["return"] = df.groupby(ticker_col, group_keys=False).apply(calc_return)
+    close = df[close_col]
+    future_close = df.groupby(ticker_col)[close_col].shift(-shift)
+    df["return"] = (future_close - close) / close
 
     # 多分类
     if n_classes == 3:
@@ -230,18 +220,12 @@ def build_regression_label(
     """
     df = panel_df.copy()
 
-    def calc_return(group):
-        close = group[close_col]
-        future_close = close.shift(-shift)
-
-        if log_return:
-            ret = np.log(future_close / close)
-        else:
-            ret = (future_close - close) / close
-
-        return ret
-
-    df["label"] = df.groupby(ticker_col, group_keys=False).apply(calc_return)
+    close = df[close_col]
+    future_close = df.groupby(ticker_col)[close_col].shift(-shift)
+    if log_return:
+        df["label"] = np.log(future_close / close)
+    else:
+        df["label"] = (future_close - close) / close
 
     # 去除 NaN
     df = df.dropna(subset=["label"])
@@ -350,6 +334,33 @@ def attach_label_to_panel(
     return df
 
 
+def build_labels(
+    panel_df: pd.DataFrame,
+    label_spec: LabelSpec,
+    *,
+    date_col: str = "date",
+    ticker_col: str = "ticker",
+    close_col: str = "close_qfq",
+) -> Tuple[pd.Series, pd.DataFrame, LabelMeta]:
+    extra_kwargs = {}
+    if str(label_spec.label_mode).startswith("regression"):
+        extra_kwargs["log_return"] = False
+    target, meta = build_label(
+        panel_df,
+        mode=label_spec.label_mode,
+        date_col=date_col,
+        ticker_col=ticker_col,
+        close_col=close_col,
+        shift=max(1, int(label_spec.horizon_days)),
+        **extra_kwargs,
+    )
+    label_end_date = panel_df.groupby(ticker_col)[date_col].shift(-max(1, int(label_spec.horizon_days)))
+    label_meta = panel_df[[date_col, ticker_col]].copy()
+    label_meta["label_end_date"] = pd.to_datetime(label_end_date)
+    label_meta["target"] = target.reindex(label_meta.index)
+    return target, label_meta, meta
+
+
 # =========================================================
 # 公开 API 导出
 # =========================================================
@@ -359,5 +370,6 @@ __all__ = [
     "build_multiclass_label",
     "build_regression_label",
     "build_label",
+    "build_labels",
     "attach_label_to_panel",
 ]

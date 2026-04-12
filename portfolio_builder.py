@@ -107,6 +107,7 @@ class PortfolioConfig:
     cash_buffer: float = 0.05
     rebalance_freq: str = "daily"
     min_score: Optional[float] = None
+    skip_untradeable_on_rebalance: bool = True
     exclude_tickers: List[str] = field(default_factory=list)
 
 
@@ -334,9 +335,13 @@ def build_portfolio(
     Returns:
         Portfolio 数据类
     """
+    candidate_scores = scores_df
+    if config.skip_untradeable_on_rebalance and "is_tradeable" in scores_df.columns:
+        candidate_scores = scores_df[scores_df["is_tradeable"].fillna(False)].copy()
+
     # 选择 TopK
     topk_df = select_topk(
-        scores_df,
+        candidate_scores,
         date=date,
         score_col=score_col,
         ticker_col=ticker_col,

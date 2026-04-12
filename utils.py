@@ -7,7 +7,7 @@ import random
 import subprocess
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -116,8 +116,9 @@ def create_manifest(
     search_runs_completed: Optional[int] = None,
     split_info: Optional[Dict[str, Any]] = None,
     search_summary: Optional[Dict[str, Any]] = None,
+    contracts: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    manifest = {
+    manifest: Dict[str, Any] = {
         "manifest_version": "1.0",
         "run_id": run_id,
         "experiment_id": run_id,
@@ -148,6 +149,10 @@ def create_manifest(
         },
         "cli_args": cli_args,
     }
+    if contracts is not None:
+        manifest["contracts"] = contracts
+        data_section = cast(Dict[str, Any], manifest["data"])
+        data_section["data_hash"] = data_section.get("data_hash") or contracts.get("data", {}).get("data_hash")
 
     if best_config is not None:
         manifest["best_config"] = best_config
